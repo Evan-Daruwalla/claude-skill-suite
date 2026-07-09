@@ -1,0 +1,24 @@
+#!/bin/sh
+# commit-gate — native git pre-commit hook.
+# Blocks a commit whose STAGED diff contains a secret. Covers commits made from
+# the shell (the PreToolUse hook covers commits the model makes via Bash).
+# Install: copy to <repo>/.git/hooks/pre-commit (chmod +x), OR point
+# `git config core.hooksPath` at a dir containing this file.
+#
+# Fail-open on scanner error (status != 1) so a scanner bug never wedges commits.
+
+# Set this to wherever you cloned the suite:
+SCANNER="/path/to/claude-skill-suite/history-leak-scan/pm-secretscan.js"
+REPO=$(git rev-parse --show-toplevel)
+
+node "$SCANNER" --staged "$REPO"
+status=$?
+if [ "$status" -eq 1 ]; then
+  echo "" >&2
+  echo "commit-gate: a secret was detected in the STAGED diff — commit BLOCKED." >&2
+  echo "Remove it from the diff; if it is a live credential, rotate it (secret-rotation)" >&2
+  echo "and update .claude/secrets-inventory.md before retrying." >&2
+  echo "(To override in a true emergency: git commit --no-verify — do NOT make this a habit.)" >&2
+  exit 1
+fi
+exit 0
