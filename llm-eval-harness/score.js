@@ -8,9 +8,9 @@
  * 'golden' tasks compare the candidate to goldens/<id>.<refModel>.md by
  * line-similarity — they need a golden captured under that model first.
  *
- * Appends one line to ratchet.jsonl so the Fable->cheaper-model gap is trackable
- * over time. NO LLM-judge (no API key; a non-reproducible judge would be
- * invented data).
+ * Appends one line to ratchet.jsonl so the flagship->cheaper-model gap is
+ * trackable over time. NO LLM-judge (no API key; a non-reproducible judge would
+ * be invented data).
  */
 "use strict";
 const fs = require("fs");
