@@ -8,9 +8,9 @@
  * 'golden' tasks compare the candidate to goldens/<id>.<refModel>.md by
  * line-similarity — they need a golden captured under that model first.
  *
- * Appends one line to ratchet.jsonl so the flagship->cheaper-model gap is
- * trackable over time. NO LLM-judge (no API key; a non-reproducible judge would
- * be invented data).
+ * Appends one line to ratchet.jsonl so the Fable->cheaper-model gap is trackable
+ * over time. NO LLM-judge (no API key; a non-reproducible judge would be
+ * invented data).
  */
 "use strict";
 const fs = require("fs");
@@ -33,10 +33,12 @@ function runCheck(text, c) {
   }
 }
 
-// line-level LCS similarity in [0,1]
+// word-level LCS similarity in [0,1]. (Line-level LCS was effectively binary on
+// one-paragraph prose goldens — any wording change scored ~0. Word tokens give a
+// graded, still fully deterministic score.)
 function similarity(a, b) {
-  const A = a.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const B = b.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const tok = (t) => t.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const A = tok(a), B = tok(b);
   if (!A.length && !B.length) return 1;
   const dp = Array.from({ length: A.length + 1 }, () => new Array(B.length + 1).fill(0));
   for (let i = 1; i <= A.length; i++)
