@@ -40,6 +40,16 @@ const SKIP_FILES = /(package-lock\.json|yarn\.lock|poetry\.lock|Cargo\.lock|\.mi
 // weak/short password literals that slip under the entropy threshold (the
 // admin1234 class). Requires a QUOTED value so env-reads don't false-positive.
 const WEAK_PW = /\b([A-Za-z0-9_]*(?:password|passwd|pwd)[A-Za-z0-9_]*)\s*[:=]\s*['"]([^'"\s]{4,20})['"]/i;
+// Test files legitimately hold fake fixture passwords / high-entropy sample
+// data ("demo1234", "short"). Firing the weak-password + entropy heuristics on
+// them cries wolf and trains --no-verify. In test files, keep only the strong
+// per-provider rules (a REAL AWS/GitHub key in a test is still a leak).
+function isTestFile(f) {
+  return /(^|\/)(tests?|__tests__|__mocks__|spec|fixtures?|e2e)\//i.test(f) ||
+    /(^|\/)test_[^/]*$/i.test(f) ||
+    /[._](test|spec)\.[a-z]+$/i.test(f) ||
+    /conftest\.py$/i.test(f);
+}
 
 function shannon(s) {
   const f = {};
@@ -53,11 +63,13 @@ function redact(s) {
   return s.replace(/[A-Za-z0-9/+_\-]{12,}/g, (m) => m.slice(0, 4) + "…" + m.slice(-2));
 }
 
-function detect(line) {
+function detect(line, file) {
   for (const [rule, re] of RULES) {
     const m = re.exec(line);
     if (m && !isPlaceholder(m[0])) return rule;
   }
+  // test files: strong provider rules only, skip the noisy heuristics
+  if (isTestFile(file || "")) return null;
   const m = ASSIGN.exec(line);
   if (m) {
     const val = m[2];
@@ -83,7 +95,7 @@ function scanRepo(repo, mode) {
       else if (line.startsWith("+++ b/")) file = line.slice(6);
       else if (line.startsWith("+") && !line.startsWith("+++")) {
         if (SKIP_FILES.test(file)) return;
-        const rule = detect(line.slice(1));
+        const rule = detect(line.slice(1), file);
         if (rule) findings.push({ commit, file, rule, snippet: redact(line.slice(1).trim()) });
       }
     };
