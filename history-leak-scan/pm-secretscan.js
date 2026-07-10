@@ -40,15 +40,19 @@ const SKIP_FILES = /(package-lock\.json|yarn\.lock|poetry\.lock|Cargo\.lock|\.mi
 // weak/short password literals that slip under the entropy threshold (the
 // admin1234 class). Requires a QUOTED value so env-reads don't false-positive.
 const WEAK_PW = /\b([A-Za-z0-9_]*(?:password|passwd|pwd)[A-Za-z0-9_]*)\s*[:=]\s*['"]([^'"\s]{4,20})['"]/i;
-// Test files legitimately hold fake fixture passwords / high-entropy sample
-// data ("demo1234", "short"). Firing the weak-password + entropy heuristics on
-// them cries wolf and trains --no-verify. In test files, keep only the strong
-// per-provider rules (a REAL AWS/GitHub key in a test is still a leak).
-function isTestFile(f) {
+// Test AND documentation files legitimately hold fake example credentials —
+// fixture passwords ("demo1234", "short") and secrets quoted in prose while
+// explaining them. Firing the weak-password + high-entropy heuristics on them
+// cries wolf and trains --no-verify. In these files, keep only the strong
+// per-provider rules (a REAL AWS/GitHub key / private-key block is still a leak
+// anywhere). Residual risk: a raw high-entropy token pasted into a .md that
+// matches no provider regex won't be caught — accepted vs. gate-fatigue.
+function isHeuristicExempt(f) {
   return /(^|\/)(tests?|__tests__|__mocks__|spec|fixtures?|e2e)\//i.test(f) ||
     /(^|\/)test_[^/]*$/i.test(f) ||
     /[._](test|spec)\.[a-z]+$/i.test(f) ||
-    /conftest\.py$/i.test(f);
+    /conftest\.py$/i.test(f) ||
+    /\.(md|markdown|mdx|rst|txt|adoc)$/i.test(f); // documentation
 }
 
 function shannon(s) {
@@ -68,8 +72,8 @@ function detect(line, file) {
     const m = re.exec(line);
     if (m && !isPlaceholder(m[0])) return rule;
   }
-  // test files: strong provider rules only, skip the noisy heuristics
-  if (isTestFile(file || "")) return null;
+  // test + doc files: strong provider rules only, skip the noisy heuristics
+  if (isHeuristicExempt(file || "")) return null;
   const m = ASSIGN.exec(line);
   if (m) {
     const val = m[2];
