@@ -8,7 +8,7 @@ const files = fs.readdirSync(CORPUS).filter((f) => f.endsWith('.txt')).sort();
 const { kept } = loadDict(tok);
 
 const d = (s) => (s.match(/\d+/g) || []).sort().join(',');
-const n = (s) => (s.match(/\bNOT\b|\bNEVER\b|\bMUST\b/g) || []).length;
+const n = (s) => (s.match(/\b(no|not|never|must|cannot|can't|don't|won't|shouldn't|mustn't)\b/gi) || []).length;
 const id = (s) => (s.match(/\b\w+(?:\.\w+)+\b/g) || []).sort().join(',');
 
 let tC = 0, tB = 0, fails = 0;
@@ -21,6 +21,8 @@ for (const f of files) {
   if (n(c) !== n(o)) errs.push('negations');
   if (id(c) !== id(o)) errs.push('identifiers');
   for (const s of store) if (!o.includes(s)) errs.push('span');
+  const { text: o2 } = runAB(o, kept);
+  if (o2 !== o) errs.push('idempotence');
   const cT = tok(c), bT = tok(o); tC += cT; tB += bT;
   const pct = ((1 - bT / cT) * 100).toFixed(1);
   console.log(`${f.padEnd(28)} ${String(cT).padStart(4)} -> ${String(bT).padStart(4)}  ${String(pct).padStart(5)}%  ${errs.length ? 'GUARD FAIL: ' + errs.join(',') : 'ok'}`);

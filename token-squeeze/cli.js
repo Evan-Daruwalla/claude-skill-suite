@@ -20,22 +20,27 @@ const input = fs.readFileSync(file === '-' ? 0 : file, 'utf8');
 const { kept } = loadDict(tok);
 const { text: output, applied } = runAB(input, kept, { clean: flags.has('--clean') });
 
-// guard: numbers, uppercase negations, dotted identifiers, protected spans must survive
+// guard: numbers, negation/constraint words (any case), dotted identifiers,
+// protected spans must survive; output must be idempotent (fixed point)
 const { store } = mask(input);
 const d = (s) => (s.match(/\d+/g) || []).sort().join(',');
-const n = (s) => (s.match(/\bNOT\b|\bNEVER\b|\bMUST\b/g) || []).length;
+const n = (s) => (s.match(/\b(no|not|never|must|cannot|can't|don't|won't|shouldn't|mustn't)\b/gi) || []).length;
 const id = (s) => (s.match(/\b\w+(?:\.\w+)+\b/g) || []).sort().join(',');
 const errs = [];
 if (d(input) !== d(output)) errs.push('numbers changed');
-if (n(input) !== n(output)) errs.push('NOT/NEVER/MUST changed');
+if (n(input) !== n(output)) errs.push('negation/constraint word changed');
 if (id(input) !== id(output)) errs.push('dotted identifier changed');
 for (const s of store) if (!output.includes(s)) errs.push('protected span lost');
+const { text: second } = runAB(output, kept, { clean: flags.has('--clean') });
+if (second !== output) errs.push('not idempotent');
 
 const before = tok(input), after = tok(output);
 const savedPct = +(((1 - after / before) * 100).toFixed(1));
 
 if (flags.has('--json')) {
-  process.stdout.write(JSON.stringify({ input, output, tokensBefore: before, tokensAfter: after, savedPct, subs: applied.length, guard: errs.length ? errs : 'pass' }, null, 2));
+  const subsDetail = {};
+  for (const [k, v] of applied) { const key = `${k} -> ${v || '(deleted)'}`; subsDetail[key] = (subsDetail[key] || 0) + 1; }
+  process.stdout.write(JSON.stringify({ input, output, tokensBefore: before, tokensAfter: after, savedPct, subs: applied.length, subsDetail, guard: errs.length ? errs : 'pass' }, null, 2));
 } else {
   process.stdout.write(output);
 }
