@@ -33,3 +33,17 @@ GUARANTEES AND LIMITS (report honestly, don't oversell).
 - Meaning-leaning, not string-lossless: substitutions preserve propositional content but change wording; emphasis from deleted filler is lost by design. Do not use where exact wording is contractual (legal text, quoted material) — those cases are protected only if quoted.
 
 After running, show the user the savedPct and the guard result; if the guard fails, surface it rather than returning the output silently.
+
+REPORTING FORMAT. Show before/after with the savedPct, then two short lists:
+**Preserved** (protected spans, negations, numbers — what the guard confirmed
+survived) and **Dropped** (pure-filler phrases removed entirely, not
+substituted — from `subsDetail`, the "-> (deleted)" entries). Never silently
+swap the user's text; the diff and the guard result are always shown.
+
+FOR LONG REUSABLE PROMPTS (~200+ words). Beyond running the dictionary
+substitution, restructure the result as: **INTENT** (one sentence — what the
+prompt is for), **CONSTRAINTS** (bullets — the non-negotiable rules), **CONTEXT**
+(only what the model can't infer on its own). This is a manual restructuring
+step on top of the deterministic pass, not something the CLI does — do it only
+when asked to prep a prompt for reuse (a saved prompt, a system prompt, a skill
+body), not for a one-off message.
