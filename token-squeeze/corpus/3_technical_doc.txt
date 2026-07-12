@@ -1,0 +1,8 @@
+In order to configure the server, you need to utilize the following approach. Due to the fact that the cache is split-adjusted, every writer must take into consideration the adjustment flag.
+
+```js
+const res = fetch("https://api.example.com/v1/data?limit=100");
+if (res.status !== 200) { throw new Error("in order to fail loudly"); }
+```
+
+It is important to note that the file lives at `src/server.js` and the timeout is set to 30000 ms. At this point in time, in the event that the request fails, the system will retry approximately 3 times prior to giving up.

@@ -1,0 +1,1 @@
+Refactor auth.js to use async/await. Keep the JWT logic. Add a test for the expired-token path. Do not change the public API.

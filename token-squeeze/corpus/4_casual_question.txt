@@ -1,0 +1,1 @@
+So I was just wondering, is it possible that you could maybe explain to me how promises work in JavaScript? I've been trying to understand them for a while now but I keep getting confused about the whole async thing.

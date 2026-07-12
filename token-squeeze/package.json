@@ -1,0 +1,11 @@
+{
+  "name": "token-squeeze",
+  "version": "1.0.0",
+  "description": "Deterministic, no-LLM English->fewer-tokens compressor for reused prompts and docs.",
+  "bin": { "token-squeeze": "cli.js" },
+  "main": "lib/pipeline.js",
+  "scripts": { "test": "node test.js" },
+  "dependencies": { "gpt-tokenizer": "^2.0.0" },
+  "engines": { "node": ">=18" },
+  "license": "MIT"
+}
