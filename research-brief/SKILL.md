@@ -47,5 +47,5 @@ candidates for X".
 
 ## Rules
 - DO NOT MAKE ANYTHING UP. Missing data is reported as missing.
-- Prefer primary sources; date every source (staleness matters in markets).
+- Prefer primary sources; date every source (staleness matters).
 - Keep the chat response short — the file is the deliverable.

@@ -16,8 +16,9 @@ file", "find as many security fixes / optimizations / issues as possible".
 ## Inputs
 - Scope (default: whole project; the user may narrow to a subsystem — e.g.
   "the API", "the dashboard", "everything before <date>").
-- If a knowledge graph exists (`graphify-out/`), query it first to target the
-  audit instead of reading every file cold.
+- If a code knowledge graph or index already exists (e.g. a `graphify-out/`
+  directory), query it first to target the audit instead of reading every file
+  cold.
 
 ## Steps
 1. **Map the surface.** Enumerate entry points, data stores, background jobs,
@@ -25,15 +26,16 @@ file", "find as many security fixes / optimizations / issues as possible".
 2. **Sweep by category**, collecting findings as you go:
    - **Correctness**: logic bugs, silent failure paths, error handling that
      swallows problems, stale/duplicated state, timezone/encoding traps.
-   - **Data integrity**: duplicate rows, gaps, mixed conventions (e.g. price
-     adjustment basis), anything that would silently corrupt downstream
-     numbers. For DB-backed projects, run actual queries — don't infer.
+   - **Data integrity**: duplicate rows, gaps, mixed conventions (e.g. units,
+     timezone bases, or adjustment flags), anything that would silently corrupt
+     downstream numbers. For DB-backed projects, run actual queries — don't infer.
    - **Security**: injection, authZ/authN gaps, secrets in code, path
      traversal, missing rate limits, dependency alerts.
    - **Performance**: N+1 patterns, missing indexes, unbounded reads,
      needless re-computation.
-   - **Docs drift**: HANDOFF/state/record claims that no longer match the
-     code or data. Flag, don't rewrite (that's the handoff skill's job).
+   - **Docs drift**: project docs (README, handoff, status, changelog) whose
+     claims no longer match the code or data. Flag, don't rewrite (that's a
+     docs-update job, not the audit's).
 3. **Verify before reporting.** Each finding needs evidence: the file:line,
    the query result, or the reproduced error. No speculative findings — if
    you can't demonstrate it, don't list it.
