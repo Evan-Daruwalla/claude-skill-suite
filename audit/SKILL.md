@@ -6,16 +6,16 @@ description: Full sweeping project audit — code, data integrity, security, per
 # Project Audit
 
 Systematic audit of the current project. Output is a ranked findings table
-Evan can approve in one word ("do all", "do 1-4"). Do not fix during the
+the user can approve in one word ("do all", "do 1-4"). Do not fix during the
 audit pass.
 
 ## Trigger
-`/audit`, or Evan asks for a "full audit", "sweeping audit", "audit every
+`/audit`, or the user asks for a "full audit", "sweeping audit", "audit every
 file", "find as many security fixes / optimizations / issues as possible".
 
 ## Inputs
-- Scope (default: whole project; Evan may narrow to "the sim", "the dash",
-  "the website", "everything before <date>").
+- Scope (default: whole project; the user may narrow to a subsystem — e.g.
+  "the API", "the dashboard", "everything before <date>").
 - If a knowledge graph exists (`graphify-out/`), query it first to target the
   audit instead of reading every file cold.
 
@@ -40,10 +40,10 @@ file", "find as many security fixes / optimizations / issues as possible".
 4. **Rank and report.** One table: `# | Severity (crit/high/med/low) |
    Finding | Evidence | Proposed fix | Effort`. Order by severity. Under the
    table, one short paragraph on overall health.
-5. **Wait for approval.** Evan typically replies "do all" or "do 1 and 3".
-   Then fix in severity order, verifying each fix (run the relevant tests —
-   in Trading, the frozen regression tests must stay at d=±0.0000pp), and
-   report what was fixed vs. skipped.
+5. **Wait for approval.** The user typically replies "do all" or "do 1 and 3".
+   Then fix in severity order, verifying each fix (run the relevant tests — if
+   the project has frozen regression tests, they must stay at their baseline),
+   and report what was fixed vs. skipped.
 
 ## Output
 - Severity-ranked findings table with evidence and numbered items.
@@ -53,7 +53,7 @@ file", "find as many security fixes / optimizations / issues as possible".
 ## Rules
 - Findings pass changes NOTHING. No drive-by fixes, no "improved while I was
   there".
-- Never delete anything (files, DB rows, sleeves) without asking, even if it
-  looks like junk — this environment has known harmless stray files.
+- Never delete anything (files, DB rows, records) without asking, even if it
+  looks like junk — some environments accumulate harmless stray files.
 - Keep tokens low: sample large files intelligently, use grep/queries over
   full reads, and don't paste long code excerpts into the report.

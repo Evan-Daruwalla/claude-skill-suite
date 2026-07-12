@@ -9,7 +9,7 @@ Structured deep research with sources, skepticism, and a saved artifact —
 instead of a one-off chat answer that evaporates.
 
 ## Trigger
-`/research-brief <topic>`, or Evan says "research X", "deep dive into X",
+`/research-brief <topic>`, or the user says "research X", "deep dive into X",
 "analyze what happened [in the market / to this stock]", "propose top N
 candidates for X".
 
@@ -21,15 +21,15 @@ candidates for X".
 
 ## Steps
 1. **Frame it.** One sentence: what question is this brief answering, and
-   what decision does it feed? If the topic is a proposal Evan wrote, analyze
-   it from multiple genuinely different angles (optimistic, pessimistic,
-   different approach directions) — no yes-man convergence.
+   what decision does it feed? If the topic is a proposal the user wrote,
+   analyze it from multiple genuinely different angles (optimistic,
+   pessimistic, different approach directions) — no yes-man convergence.
 2. **Search wide, then deep.** Web search for primary sources (papers, docs,
    filings, data) over blog rehashes. For market questions, get actual
    numbers (prices, dates, magnitudes), not narratives.
 3. **Cross-check.** Any load-bearing claim needs 2+ independent sources or an
    explicit "single-source, unverified" tag. Never present a guess as a fact
-   — this feeds real capital-allocation and engineering decisions.
+   — this feeds real decisions with real consequences.
 4. **Synthesize.** Write the brief:
    - **TL;DR** (3-5 sentences, verdict first).
    - **Findings** (organized by theme, each with inline source links).
@@ -40,8 +40,7 @@ candidates for X".
 5. **Save it** to the docs path with today's absolute date, and add one line
    to the project record if the project keeps one.
 6. **For long runs**: if research will take >15 minutes, spawn background
-   research agents in parallel by sub-topic, then compile when all report in
-   (this matches the existing pre-market-report pipeline pattern).
+   research agents in parallel by sub-topic, then compile when all report in.
 
 ## Output
 - The saved brief file, plus the TL;DR and ranked candidates inline in chat.

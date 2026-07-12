@@ -5,14 +5,13 @@ description: Evaluate an external Claude Code skill, plugin, or MCP server (usua
 
 # Skill Vet
 
-Evaluate third-party skills/plugins/MCP servers against Evan's actual
-workflow before anything touches `~/.claude/`. History shows unvetted bulk
-installs left ~30 dead claude-flow skills polluting every session — this
-skill exists to prevent that.
+Evaluate third-party skills/plugins/MCP servers against your actual workflow
+before anything touches `~/.claude/`. Unvetted bulk installs can leave dozens
+of dead skills polluting every session — this skill exists to prevent that.
 
 ## Trigger
-`/skill-vet <url>`, or Evan pastes a skill/plugin/MCP link asking "would this
-be useful", "look at this", or "install this".
+`/skill-vet <url>`, or the user pastes a skill/plugin/MCP link asking "would
+this be useful", "look at this", or "install this".
 
 ## Inputs
 - URL(s) or local path(s) of the candidate.
@@ -24,9 +23,9 @@ be useful", "look at this", or "install this".
 1. **Fetch and read the actual source** — SKILL.md, scripts, hooks, and any
    install steps. Never judge from the README pitch alone.
 2. **Check dependencies.** Does it require MCP servers, daemons, CLIs, or API
-   keys not present on this machine (Windows 11, Claude Code desktop app, no
-   `claude` on PATH, no ANTHROPIC_API_KEY)? A skill whose tools can't run is
-   an automatic SKIP no matter how good it sounds.
+   keys not present in the current environment (check the OS, whether `claude`
+   is on PATH, whether an API key is set)? A skill whose tools can't run is an
+   automatic SKIP no matter how good it sounds.
 3. **Check overlap.** Compare against currently installed skills and built-in
    Claude Code features. If it duplicates something already present, say so
    and name the incumbent.
