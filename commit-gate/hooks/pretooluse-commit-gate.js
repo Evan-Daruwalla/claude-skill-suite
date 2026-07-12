@@ -20,6 +20,12 @@ const { execFileSync } = require("child_process");
 const SCANNER = path.join(__dirname, "..", "..", "history-leak-scan", "pm-secretscan.js");
 
 function allow() { process.exit(0); }
+// fail-open, but NOISY: surface that the gate was skipped instead of silently
+// allowing an unscanned commit (a gate that skips silently is a dead gate).
+function allowWithWarning(msg) {
+  process.stdout.write(JSON.stringify({ systemMessage: msg }) + "\n");
+  process.exit(0);
+}
 function deny(reason) {
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
@@ -54,7 +60,11 @@ function main() {
         "before committing."
       );
     }
-    return allow(); // usage error / scanner failure → fail open
+    // usage error / scanner failure → fail open, loudly
+    return allowWithWarning(
+      "commit-gate WARNING: scanner error (" + ((e && e.status) || "unknown") +
+      ") — secret gate SKIPPED (fail-open); this commit is UNSCANNED. Check the scanner."
+    );
   }
 }
 

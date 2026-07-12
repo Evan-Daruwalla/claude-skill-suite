@@ -3,8 +3,10 @@ name: history-leak-scan
 description: >
   Deterministic secret scanner for git repositories — no dependencies, no API key.
   Scans full git history (every version ever committed) or the staged diff for
-  leaked credentials: per-provider keys (AWS, GitHub, Slack, Google, Stripe,
-  Alpaca), private-key blocks, JWTs, high-entropy assignments, and weak/short
+  leaked credentials: per-provider keys (AWS, GitHub incl. fine-grained PATs,
+  Slack, Google, Stripe, Alpaca, Anthropic, OpenAI, npm, HuggingFace, SendGrid,
+  Twilio, Resend), private-key blocks, JWTs, sensitive filenames (.env, .pem,
+  id_rsa, *_keys.env), high-entropy assignments, and weak/short
   passwords. Use when the user says "scan for secrets", "leak scan", "check for
   leaked keys/credentials", "did I commit a secret", "history-leak-scan", or after
   any repo goes public / any suspected exposure. The same scanner backs commit-gate
@@ -15,8 +17,11 @@ description: >
 
 The engine is `pm-secretscan.js` (portable Node, zero deps). It streams
 `git log -p --all` (history) or `git diff --cached` (staged) and flags added
-lines against per-provider regexes + a generic high-entropy-assignment detector
-+ a weak-password rule, with token-level placeholder suppression.
+lines against per-provider regexes (16 rules) + a sensitive-filename rule
+(.env*, *.pem/.p12/.pfx, id_rsa*, *_keys.env — a file of that NAME should never
+be committed, whatever it contains; example/sample/template/fixture names
+exempt) + a generic high-entropy-assignment detector + a weak-password rule,
+with token-level placeholder suppression.
 
 ## Commands
 
@@ -28,7 +33,7 @@ lines against per-provider regexes + a generic high-entropy-assignment detector
 - **Self-test (part of the definition of done):**
   `node pm-secretscan.js --canary`
   Plants real-format secrets + placeholders in a throwaway repo, asserts
-  ≥4 real caught and 0 false positives. MUST print `PASS` before you trust a
+  ≥7 real caught and 0 false positives. MUST print `PASS` before you trust a
   scan result — an unverified gate is theater.
 
 ## When invoked
@@ -48,6 +53,11 @@ lines against per-provider regexes + a generic high-entropy-assignment detector
   (`.env`, key files) are correctly out of history — verify they were never
   committed by a clean history scan, not by their current absence.
 - Entropy detection can miss bespoke low-entropy formats — that's why the
-  per-provider regexes exist; extend `RULES` when a new provider appears.
+  per-provider regexes exist; extend `RULES` when a new provider appears (and
+  add a canary fixture for every new rule — a rule without a canary is
+  unverified).
+- No live credential verification (TruffleHog-style API checks) BY DESIGN:
+  that would transmit candidate secrets to provider endpoints. Triage of
+  live-vs-dev-default stays a human/model judgment step.
 - Redaction shows first-4 + last-2 of long tokens; still treat output as
   sensitive.

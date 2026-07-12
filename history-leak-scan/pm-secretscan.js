@@ -21,12 +21,25 @@ const RULES = [
   ["aws-secret", /\baws_secret_access_key\b['"\s:=]+[A-Za-z0-9/+]{40}\b/i],
   ["alpaca-key-id", /\b(?:PK|AK)[A-Z0-9]{16,}\b/],
   ["github-token", /\bgh[posru]_[A-Za-z0-9]{36,}\b/],
+  ["github-fine-grained-pat", /\bgithub_pat_[A-Za-z0-9_]{50,}\b/],
   ["slack-token", /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/],
   ["google-api-key", /\bAIza[0-9A-Za-z_\-]{35}\b/],
   ["stripe-secret", /\bsk_live_[0-9a-zA-Z]{24,}\b/],
+  ["anthropic-key", /\bsk-ant-[A-Za-z0-9_\-]{20,}\b/],
+  ["openai-key", /\bsk-[A-Za-z0-9_\-]*T3BlbkFJ[A-Za-z0-9_\-]{10,}\b/],
+  ["npm-token", /\bnpm_[A-Za-z0-9]{36}\b/],
+  ["huggingface-token", /\bhf_[A-Za-z0-9]{30,}\b/],
+  ["sendgrid-key", /\bSG\.[A-Za-z0-9_\-]{16,32}\.[A-Za-z0-9_\-]{16,64}\b/],
+  ["twilio-key", /\bSK[0-9a-f]{32}\b/],
+  ["resend-key", /\bre_[A-Za-z0-9]{7,}_[A-Za-z0-9]{16,}\b/],
   ["private-key-block", /-----BEGIN (?:RSA |EC |OPENSSH |PGP |DSA )?PRIVATE KEY-----/],
   ["jwt", /\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b/],
 ];
+// files that should never be committed AT ALL, regardless of content.
+// Name-based (gitleaks-style path rule); example/sample/template names and
+// test-fixture paths are exempt (self-signed test certs are legitimate).
+const SENSITIVE_FILE = /(^|\/)(\.env(\.[^\/]+)?|[^\/]+\.(pem|p12|pfx)|id_(rsa|ed25519|ecdsa)(\.[^\/]+)?|[^\/]*_keys?\.env)$/i;
+const FILE_EXEMPT = /example|sample|template|dummy|fixture/i;
 // generic "secretish_name = <value>" assignment (keyword may be embedded,
 // e.g. alpaca_secret_key — no leading word boundary required)
 const ASSIGN = /\b([A-Za-z0-9_]*(?:api[_-]?key|secret|token|password|passwd|pwd|access[_-]?key|client[_-]?secret)[A-Za-z0-9_]*)\s*[:=]\s*['"]?([A-Za-z0-9/+_\-]{16,})['"]?(?:\s|$|['";,)])/i;
@@ -96,7 +109,12 @@ function scanRepo(repo, mode) {
     let commit = "(working)", file = "?", buf = "";
     const onLine = (line) => {
       if (line.startsWith("commit ")) commit = line.slice(7, 17);
-      else if (line.startsWith("+++ b/")) file = line.slice(6);
+      else if (line.startsWith("+++ b/")) {
+        file = line.slice(6);
+        if (SENSITIVE_FILE.test(file) && !FILE_EXEMPT.test(file) && !isHeuristicExempt(file)) {
+          findings.push({ commit, file, rule: "sensitive-filename", snippet: "(file of this name should not be committed)" });
+        }
+      }
       else if (line.startsWith("+") && !line.startsWith("+++")) {
         if (SKIP_FILES.test(file)) return;
         const rule = detect(line.slice(1), file);
@@ -131,15 +149,19 @@ async function runCanary() {
       line("AWS_KEY", "AKIA" + "QZ3RT7YXKW9MPL2V") +
       line("alpaca_secret_key", "aQ9vK2mZ7pL4xR8n" + "ToB6yC3dF5gH0jSuWeR") +
       line("DB_PASSWORD", "P4x8Rt2QmZ7v" + "KnBwY6cDfHjSgL0eUaWq") +
-      line("admin_password", "admin" + "1234"));
+      line("admin_password", "admin" + "1234") +
+      line("ANTHROPIC_API_KEY", "sk-ant-" + "api03-Xk7mQ2vL9pR4tY8w" + "ZbC5dF1gH6jN0sUa") +
+      line("RESEND_API_KEY", "re_dJ8kQ2mV" + "_" + "xT4bN7wZ9cF1gH5pL3sYaR"));
+    fs.writeFileSync(path.join(dir, "server" + ".pem"), "placeholder body, the NAME is the finding\n");
     fs.writeFileSync(path.join(dir, "example.env"),
-      "API_KEY=your_api_key_here\ndb_password=changeme\n");
+      "API_KEY=your_api_key_here\ndb_password=changeme\n" +
+      "ANTHROPIC_API_KEY=sk-ant-" + "your-api-key-goes-here-replace-me\n");
     g(["add", "-A"]); g(["commit", "-qm", "canary"]);
     const { findings } = await scanRepo(dir, "history");
-    const real = findings.filter((f) => f.file === "config.py").length;
+    const real = findings.filter((f) => f.file === "config.py" || f.file.endsWith(".pem")).length;
     const fp = findings.filter((f) => f.file === "example.env").length;
-    const pass = real >= 4 && fp === 0;
-    console.log(`canary: ${real} real caught (expect >=4), ${fp} false positive(s) (expect 0) -> ${pass ? "PASS" : "FAIL"}`);
+    const pass = real >= 7 && fp === 0;
+    console.log(`canary: ${real} real caught (expect >=7), ${fp} false positive(s) (expect 0) -> ${pass ? "PASS" : "FAIL"}`);
     if (!pass) for (const f of findings) console.log(`  [${f.rule}] ${f.file}: ${f.snippet}`);
     return pass;
   } finally {

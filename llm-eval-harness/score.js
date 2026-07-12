@@ -8,9 +8,9 @@
  * 'golden' tasks compare the candidate to goldens/<id>.<refModel>.md by
  * line-similarity — they need a golden captured under that model first.
  *
- * Appends one line to ratchet.jsonl so the flagship->cheaper-model gap is
- * trackable over time. NO LLM-judge (no API key; a non-reproducible judge would
- * be invented data).
+ * Appends one line to ratchet.jsonl so the Fable->cheaper-model gap is trackable
+ * over time. NO LLM-judge (no API key; a non-reproducible judge would be
+ * invented data).
  */
 "use strict";
 const fs = require("fs");
@@ -29,8 +29,29 @@ function runCheck(text, c) {
     case "contains": return text.includes(c.s);
     case "maxFirstLineLen": return firstLine(text).length <= c.n;
     case "minLines": return nonEmptyLines(text) >= c.n;
+    case "maxWords": return text.split(/\s+/).filter(Boolean).length <= c.n;
     default: throw new Error("unknown check type: " + c.type);
   }
+}
+
+// --summary: read the ratchet and report per (model, task): n, median, min, max.
+// Single-sample scores are noisy — judge from the median of >=3 samples.
+function summary() {
+  const rp = path.join(DIR, "ratchet.jsonl");
+  if (!fs.existsSync(rp)) { console.log("ratchet.jsonl not found — nothing scored yet."); return; }
+  const rows = fs.readFileSync(rp, "utf8").split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l));
+  const groups = {};
+  for (const r of rows) {
+    const k = `${r.model} | ${r.task}`;
+    (groups[k] = groups[k] || { method: r.method, scores: [] }).scores.push(r.score);
+  }
+  console.log(`model | task | method | n | median | min | max`);
+  for (const k of Object.keys(groups).sort()) {
+    const g = groups[k], s = [...g.scores].sort((a, b) => a - b);
+    const med = s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
+    console.log(`${k} | ${g.method} | ${s.length} | ${med.toFixed(3)} | ${s[0].toFixed(3)} | ${s[s.length - 1].toFixed(3)}`);
+  }
+  console.log(`\n(${rows.length} run(s) total. n=1 rows are single samples — treat as anecdotes, not measurements.)`);
 }
 
 // word-level LCS similarity in [0,1]. (Line-level LCS was effectively binary on
@@ -49,11 +70,13 @@ function similarity(a, b) {
 
 function main() {
   const args = process.argv.slice(2);
+  if (args.includes("--summary")) return summary();
+  const dry = args.includes("--dry");
   const mi = args.indexOf("--model");
   const model = mi >= 0 ? args[mi + 1] : "unknown";
   const positional = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--model");
   const [taskId, candFile] = positional;
-  if (!taskId || !candFile) { console.error("usage: score.js <taskId> <candidateFile> --model <name>"); process.exit(2); }
+  if (!taskId || !candFile) { console.error("usage: score.js <taskId> <candidateFile> --model <name> [--dry] | score.js --summary"); process.exit(2); }
 
   const task = TASKS.find((t) => t.id === taskId);
   if (!task) { console.error("no such task: " + taskId + " (have: " + TASKS.map((t) => t.id).join(", ") + ")"); process.exit(2); }
@@ -67,6 +90,7 @@ function main() {
     detail = results;
     console.log(`\n[${taskId}] model=${model}  checks ${passed}/${results.length}  score=${score.toFixed(3)}`);
     for (const r of results) console.log(`  ${r.pass ? "PASS" : "FAIL"}  ${r.desc}`);
+    if (score === 1) console.log("  note: a perfect checks score = baseline discipline met, NOT model parity — checks are near-ceiling by design; the golden tasks and medians discriminate.");
   } else if (task.score.method === "golden") {
     const gp = path.join(DIR, "goldens", `${taskId}.${task.score.refModel}.md`);
     if (!fs.existsSync(gp)) {
@@ -80,6 +104,7 @@ function main() {
     throw new Error("unknown method: " + task.score.method);
   }
 
+  if (dry) { console.log("  -> --dry: NOT appended to ratchet.jsonl"); return; }
   const line = JSON.stringify({
     date: new Date().toISOString().slice(0, 10),
     model, task: taskId, method: task.score.method, score: Number(score.toFixed(4)),

@@ -5,7 +5,8 @@
 # Install: copy to <repo>/.git/hooks/pre-commit (chmod +x), OR point
 # `git config core.hooksPath` at a dir containing this file.
 #
-# Fail-open on scanner error (status != 1) so a scanner bug never wedges commits.
+# Fail-open on scanner error (status != 1) so a scanner bug never wedges
+# commits — but NOISILY: a gate that skips silently is a dead gate.
 
 # Set this to wherever you cloned the suite:
 SCANNER="/path/to/claude-skill-suite/history-leak-scan/pm-secretscan.js"
@@ -20,5 +21,8 @@ if [ "$status" -eq 1 ]; then
   echo "and update .claude/secrets-inventory.md before retrying." >&2
   echo "(To override in a true emergency: git commit --no-verify — do NOT make this a habit.)" >&2
   exit 1
+elif [ "$status" -ne 0 ]; then
+  echo "commit-gate WARNING: scanner error (exit $status) — secret gate SKIPPED (fail-open)." >&2
+  echo "The commit proceeds UNSCANNED. Check node + $SCANNER" >&2
 fi
 exit 0

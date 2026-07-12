@@ -25,7 +25,10 @@ deliberately excluded — it would be invented data.
     any model immediately (format conformance, no-fabrication, surgical scope…).
   - **golden** — line-similarity to a captured flagship reference; needs a capture.
 - `score.js` — `node score.js <taskId> <candidateFile> --model <name>`; prints
-  the score and appends a line to `ratchet.jsonl`.
+  the score and appends a line to `ratchet.jsonl`. `--dry` scores without
+  appending (for testing checks/fixtures). `node score.js --summary` reads the
+  ratchet and prints per-(model, task) n / median / min / max — judge from
+  medians of ≥3 samples, not single runs.
 - `goldens/` — reference outputs, named `<taskId>.<model>.md`.
 - `candidates/` — a model's answers to score.
 - `ratchet.jsonl` — the tracked series `{date, model, task, method, score}`.
@@ -51,10 +54,18 @@ in (that fabricates the bar).
 
 ## Honest limits
 - `checks` measure conformance/discipline, not full quality — they catch common
-  cheap-model failure modes (fabrication, scope creep, format drift), not
-  everything.
-- `golden` similarity is line-level; it rewards matching the reference's
+  cheap-model failure modes (fabrication, scope creep, format drift, injection
+  obedience, precedence errors), not everything. A perfect checks score means
+  baseline discipline, NOT model parity (score.js says so on every 1.000).
+- `golden` similarity is word-level; it rewards matching the reference's
   structure, so keep golden tasks structural (summaries, formatted entries), not
   open-ended prose.
 - Scores are only as representative as the task set — grow `tasks.json` from real
   failures you observe, not hypotheticals.
+- **Contamination rules:** goldens and candidates must come from sessions that
+  never saw each other's outputs; and never log a baseline for a model on checks
+  that were AUTHORED in the same session (teaching-to-the-test) — capture in a
+  fresh session. Use `--dry` for mechanics testing so fixtures never pollute the
+  ratchet.
+- Single samples are anecdotes: capture ≥3 samples per (model, task) where
+  feasible and read `--summary` medians.
