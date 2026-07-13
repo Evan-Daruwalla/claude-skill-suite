@@ -59,5 +59,10 @@ with token-level placeholder suppression.
 - No live credential verification (TruffleHog-style API checks) BY DESIGN:
   that would transmit candidate secrets to provider endpoints. Triage of
   live-vs-dev-default stays a human/model judgment step.
+- Heuristic exemption also covers rendered-doc twins under `docs/*.html`
+  (a generated HTML render of an exempt `.md`); strong provider/private-key
+  rules still apply there. Diff headers with special-char filenames (git
+  C-quotes them, e.g. an em-dash path) are unquoted before the filename rules
+  run — otherwise every rule keyed on the filename would silently no-op.
 - Redaction shows first-4 + last-2 of long tokens; still treat output as
   sensitive.

@@ -65,7 +65,13 @@ function isHeuristicExempt(f) {
     /(^|\/)test_[^/]*$/i.test(f) ||
     /[._](test|spec)\.[a-z]+$/i.test(f) ||
     /conftest\.py$/i.test(f) ||
-    /\.(md|markdown|mdx|rst|txt|adoc)$/i.test(f); // documentation
+    /\.(md|markdown|mdx|rst|txt|adoc)$/i.test(f) || // documentation
+    // rendered documentation twins live under docs/ (e.g. an HTML twin of an
+    // exempt .md record). Scope to docs/ so real HTML app files (src/, public/,
+    // templates/, repo root) stay fully heuristic-scanned. Strong per-provider
+    // and private-key rules still apply here — only the weak-pw/entropy noise
+    // is skipped, the same accepted tradeoff as for .md prose.
+    /(^|\/)docs?\/.*\.html?$/i.test(f);
 }
 
 function shannon(s) {
@@ -109,9 +115,15 @@ function scanRepo(repo, mode) {
     let commit = "(working)", file = "?", buf = "";
     const onLine = (line) => {
       if (line.startsWith("commit ")) commit = line.slice(7, 17);
-      else if (line.startsWith("+++ b/")) {
-        file = line.slice(6);
-        if (SENSITIVE_FILE.test(file) && !FILE_EXEMPT.test(file) && !isHeuristicExempt(file)) {
+      else if (line.startsWith("+++ ")) {
+        // git C-quotes paths with special chars: `+++ "b/dir/na\342\200\224me.md"\t`
+        // (leading quote + trailing tab). Plain paths: `+++ b/dir/name.md`.
+        // Parsing only `+++ b/` left `file` as "?" for any special-char path,
+        // silently defeating every filename rule (exemptions, sensitive-name).
+        let p = line.slice(4).replace(/\t.*$/, "");        // drop trailing tab metadata
+        if (p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1); // unwrap C-quoted path
+        file = p.replace(/^b\//, "");                       // strip diff b/ prefix ("/dev/null" stays)
+        if (file !== "/dev/null" && SENSITIVE_FILE.test(file) && !FILE_EXEMPT.test(file) && !isHeuristicExempt(file)) {
           findings.push({ commit, file, rule: "sensitive-filename", snippet: "(file of this name should not be committed)" });
         }
       }
@@ -156,10 +168,19 @@ async function runCanary() {
     fs.writeFileSync(path.join(dir, "example.env"),
       "API_KEY=your_api_key_here\ndb_password=changeme\n" +
       "ANTHROPIC_API_KEY=sk-ant-" + "your-api-key-goes-here-replace-me\n");
+    // Regression fixture: a rendered-doc twin under docs/ with a special-char
+    // (em-dash) filename that git C-quotes in the diff header. It holds a
+    // weak-password-shaped line that MUST be suppressed (docs/*.html exempt) —
+    // which only happens if the quoted-path parser recovers the real filename.
+    // Broken parse -> file="?" -> not exempt -> weak-pw fires -> fp>0 -> FAIL.
+    fs.mkdirSync(path.join(dir, "docs"));
+    // build the fixture line via line() so THIS source holds no matchable
+    // NAME="value" literal (else the scanner flags its own canary source)
+    fs.writeFileSync(path.join(dir, "docs", "re — port.html"), line("admin_password", "hunter" + "2"));
     g(["add", "-A"]); g(["commit", "-qm", "canary"]);
     const { findings } = await scanRepo(dir, "history");
     const real = findings.filter((f) => f.file === "config.py" || f.file.endsWith(".pem")).length;
-    const fp = findings.filter((f) => f.file === "example.env").length;
+    const fp = findings.length - real; // anything that isn't an expected real finding is a false positive
     const pass = real >= 7 && fp === 0;
     console.log(`canary: ${real} real caught (expect >=7), ${fp} false positive(s) (expect 0) -> ${pass ? "PASS" : "FAIL"}`);
     if (!pass) for (const f of findings) console.log(`  [${f.rule}] ${f.file}: ${f.snippet}`);
