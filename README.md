@@ -27,6 +27,7 @@ a skill the model has to remember to invoke.
 | **llm-eval-harness** | Measures how far a cheaper model falls from your flagship model's quality bar, deterministically: `checks` (format / no-fabrication / surgical-scope assertions — no golden needed) and `golden` (word-level similarity to a captured flagship reference). Appends every run to a ratchet so the gap is a tracked series. No LLM-judge — a non-reproducible judge would be invented data. |
 | **token-squeeze** | Deterministic text compressor: strips filler and collapses verbose phrasing while a guard layer proves numbers, negations, dotted identifiers, and masked spans survive byte-for-byte. Ships a reproducible corpus test (`node test.js`). Requires `npm install` (`gpt-tokenizer`). |
 | **compact-io** | Always-on output-density style: lead with the answer, cut filler, plain words — governed by a **never-cut list** (numbers, paths, commands, caveats, tradeoffs, negations) so density never drops a fact. Also compresses a prompt/doc for reuse on request. Not a length cap. |
+| **opus-workers** | Cost-tiered orchestration: when an expensive flagship (e.g. Fable 5, max/ultracode) spins up agents, route the WORKERS one tier cheaper (Opus 4.8) and keep the flagship as a thin reviewer — accept, or send back with specific pointers, bounded to 2 redo rounds. The cheaper model does the bulk generation; the flagship only reviews. |
 
 ## Judgment & review
 
@@ -56,7 +57,7 @@ node token-squeeze/test.js                                 # corpus guards (afte
   anywhere, run with `node`. No dependencies.
 - **token-squeeze:** `cd token-squeeze && npm install` once (pulls
   `gpt-tokenizer`), then `node cli.js` / `node test.js`.
-- **Prose skills** (compact-io, trusted-advisor, audit, skill-vet, research-brief):
+- **Prose skills** (compact-io, opus-workers, trusted-advisor, audit, skill-vet, research-brief):
   drop the folder into `~/.claude/skills/`; nothing to install.
 - **commit-gate PreToolUse hook:** add to `~/.claude/settings.json` under
   `hooks.PreToolUse` an entry with `"matcher": "Bash"` running
