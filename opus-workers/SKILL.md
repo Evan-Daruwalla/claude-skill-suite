@@ -27,6 +27,17 @@ cheaper model compounds across the session.
 
 ## The loop
 
+0. **Workflow path only — ask the workers' reasoning effort; don't default silently.**
+   If (and only if) the workers will be spawned via the **Workflow tool**, ask the user what
+   reasoning level the workers should run at — **low / medium / high / xhigh / max** — with
+   a recommendation (default **high** for substantive delegated work; **max** only for
+   correctness-critical reasoning; **low / medium** for mechanical bulk). The
+   output-quality-vs-token tradeoff is theirs to make, not yours to assume. Apply the choice
+   per worker: `agent(prompt, { model: "opus", effort: "<level>" })` (adjust the model to
+   your tier). If spawning via the plain **Agent tool** instead, SKIP the question — it has
+   no `effort` parameter (subagents inherit the session's effort), so the answer would be
+   inert; just note in your summary that workers ran at inherited effort.
+
 1. **Delegate to the cheaper tier.** Spawn every worker with the model override set one tier
    down from the orchestrator — NOT the flagship:
    - Agent tool: pass `model: "opus"` (or `"sonnet"`/`"haiku"` per your orchestrator tier).
