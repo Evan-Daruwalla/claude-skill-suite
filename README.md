@@ -38,7 +38,7 @@ a skill the model has to remember to invoke.
 | **skill-vet** | Evaluates a third-party skill / plugin / MCP server before you install it — capability, risk, redundancy with what you already run — and gives a keep/skip verdict. |
 | **research-brief** | Turns a topic into a sourced, decision-oriented research document — every claim cited, structured for the decision it feeds. |
 | **reorg-proposal** | Read-only codebase-reorganization advisor: inspects a repo and proposes a file/folder restructure — current tree, proposed tree, and a per-move risk table naming what each move breaks (imports, paths, build, CI) — and **writes nothing**. Grounds every path in a real `git ls-files` listing; "already coherent, propose nothing" is a valid outcome. |
-| **github-repo-polish** | Professionalizes an existing repo's *presentation*: name, description, topics, README structure, semver tags/releases. Uses `gh` commands grounded in the manual, with **propose→confirm→apply** on every public change (rename breaks links; a release goes public). Portfolio-grade anti-fabrication gate: every README/description claim must trace to real repo content. Defers prose voice to the-humanizer. |
+| **github-repo-polish** | Makes an existing repo professional across two layers: **presentation** (name, description, topics, README structure, semver tags/releases) and **branch workflow** (when to branch; GitHub Flow: feature branch → PR → merge → delete). Grounded `gh`/`git` commands, **propose→confirm→apply** on every public change (rename breaks links; a release goes public; merge ships to main). Portfolio-grade anti-fabrication gate. Defers prose voice to the-humanizer. |
 
 ## Verify before you trust the gates
 

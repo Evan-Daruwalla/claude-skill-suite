@@ -1,35 +1,41 @@
 ---
 name: github-repo-polish
 description: >-
-  Polish/professionalize an EXISTING GitHub repo's PRESENTATION so it reads well
-  to a recruiter or admissions reviewer — name, one-line description, topics,
-  README structure, homepage, and semver tags/releases — using grounded `gh` CLI
-  commands, propose-then-confirm on every public change. Use ONLY when explicitly
-  asked to set up/clean up/professionalize a repo's presentation or its README,
-  description, topics, or releases. Do NOT use for writing code, committing,
-  pushing, creating a new repo/scaffolding, or CI/Actions/Projects/Wikis.
+  Make an EXISTING GitHub repo professional: its PRESENTATION (name, one-line
+  description, topics, README structure, homepage, semver tags/releases) AND a
+  clean git BRANCH WORKFLOW (when to branch, GitHub Flow: feature branch → PR →
+  merge → delete) — using grounded `gh`/`git` commands, propose-then-confirm on
+  every public change. Use when explicitly asked to set up/professionalize a
+  repo's presentation (README/description/topics/releases) OR for branching /
+  pull-request / GitHub-Flow guidance. Do NOT use for writing code, routine
+  "commit this"/"push this" of already-settled work, creating a new repo/
+  scaffolding, or CI/Actions/Projects/Wikis.
 ---
 
 # github-repo-polish
 
-Make a repo look professional on GitHub. Scoped to the **presentation /
-discoverability layer**; every outward-facing change is proposed first and only
+Make a repo look professional on GitHub, and run a clean git workflow on it.
+Two layers: the **presentation / discoverability** surface, and the **branch
+workflow** (GitHub Flow). Every outward-facing change is proposed first and only
 applied on an explicit yes.
 
 ## Trigger
 
-Fires only on an explicit request to polish an **existing** repo's presentation:
+Fires on an explicit request to (a) polish an **existing** repo's presentation —
 "professionalize this repo", "set up the repo's description and topics", "write a
-proper README", "clean up the repo page", "cut a v1 release".
+proper README", "cut a v1 release" — or (b) run/learn the branch workflow —
+"should I make a branch for this", "how do I open a PR", "set up a feature
+branch", "walk me through GitHub Flow".
 
-Does NOT fire on: "commit"/"push", writing or refactoring code, "create a new
-repo"/scaffolding a project, or CI/Actions/Projects/Wikis/Pages/Discussions
-requests (all out of scope, below).
+Does NOT fire on: routine "commit this"/"push this" of already-settled work,
+writing or refactoring code, "create a new repo"/scaffolding a project, or
+CI/Actions/Projects/Wikis/Pages/Discussions (all out of scope, below).
 
 ## Scope
 
 **In:** repo name, description, topics, homepage URL, README *structure*,
-default branch, git tags + semver releases.
+default branch, git tags + semver releases, and the **branch workflow**
+(feature branches → PR → merge → delete, GitHub Flow).
 **Out (say so, don't improvise):** GitHub Actions/CI, Projects, Wikis, Pages,
 Discussions, packages, branch-protection rules, org/security settings. README
 *prose texture* → defer to `the-humanizer`. Turning the project record into a
@@ -137,6 +143,49 @@ gh release create v1.0.0 --generate-notes                         # starting poi
 ```
 gh repo edit <owner>/<repo> --homepage https://example.com
 ```
+
+## Branch workflow (GitHub Flow)
+
+Branches isolate work so `main` stays stable and shippable — you write and test
+on a branch, then merge back only when it's ready. **When to branch:** start a
+new branch off an up-to-date `main` for each distinct unit of work —
+- a **feature** (`feature-<name>`),
+- a **bug fix** (`fix-<name>`),
+- a **risky experiment** (a throwaway you can discard if it fails).
+
+A tiny solo tweak can go straight to `main`; anything you might not finish
+cleanly, or that could break `main`, gets a branch. (Team collaboration is the
+other reason — branches keep two people off the same live files.)
+
+The cycle is **create → work → PR → merge → delete**. Creating/switching
+branches locally is harmless and reversible — do it freely. But **push, PR,
+merge, and remote-branch delete are outward-facing: gate them behind Rule 1 and
+the user's standing rules — commit/push only when the user authorizes, and merge is a
+confirm-first action (it ships to `main`).**
+
+```
+# 1. Create off a fresh main (local — no confirm needed)
+git switch main && git pull                 # or: git checkout main && git pull
+git switch -c feature-login-page            # or: git checkout -b feature-login-page
+
+# 2. Work, then push (push = confirm first; commit only when the user authorizes)
+git push -u origin feature-login-page        # first push sets upstream
+
+# 3. Open a PR (confirm first — outward-facing)
+gh pr create --fill                          # title/body from commits; or --title/--body; --web for the browser
+
+# 4. Merge after review/CI (confirm first — this ships to main)
+gh pr merge --squash --delete-branch         # or --merge / --rebase; -d also drops the local branch
+
+# 5. Sync local afterward
+git switch main && git pull
+git branch -d feature-login-page             # if not already removed by --delete-branch
+```
+
+Branch names: lowercase, hyphenated, describing the work (`feature-…`, `fix-…`,
+`chore-…`). Never force-push a shared branch, and never merge without the user's go.
+(`git switch -c` needs git ≥ 2.23; `git checkout -b` is the universal fallback.
+`gh pr` needs `gh auth status` green.)
 
 ## Prerequisites
 `gh` must be installed and authenticated (`gh auth status`). If not, say so and
