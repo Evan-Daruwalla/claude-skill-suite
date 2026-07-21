@@ -29,6 +29,29 @@ a skill the model has to remember to invoke.
 | **compact-io** | Always-on output-density style: lead with the answer, cut filler, plain words — governed by a **never-cut list** (numbers, paths, commands, caveats, tradeoffs, negations) so density never drops a fact. Also compresses a prompt/doc for reuse on request. Not a length cap. |
 | **opus-workers** | Cost-tiered orchestration: when an expensive flagship (e.g. Fable 5, max/ultracode) spins up agents, route the WORKERS one tier cheaper (Opus 4.8) and keep the flagship as a thin reviewer — accept, or send back with specific pointers, bounded to 2 redo rounds. The cheaper model does the bulk generation; the flagship only reviews. |
 
+## Deterministic quality & reproducibility gates
+
+Read-only or additive-only checkers, each with a bundled `--canary` self-test.
+The model just runs them — output quality doesn't degrade with a cheaper model.
+
+| Skill | What it does |
+|---|---|
+| **golden-lock** | Freeze ANY output as a byte-exact golden baseline (a command's stdout, a fixture file, or a prompt/text asset) and diff on change. `freeze` records it; `check` re-produces it and fails on any drift, byte-exact and on exit code. |
+| **determinism-guard** | Ephemeral invariance checker: run a command N times in one shot and prove it gives the same stdout, exit code, and (optionally) rebuilt file bytes every time — plus an order-independence check via seeded input shuffling. No stored baseline; prove stability before you freeze it with golden-lock. |
+| **flaky-test-detector** | Run a test command N times and classify it STABLE-PASS, STABLE-FAIL (consistently red — a bug, not flake), or FLAKY (the finding). The harness is deterministic; the subject may not be. |
+| **seed-control** | Static scan for unseeded randomness (`random.*`, `np.random.*`, `Math.random()`) that silently breaks reproducibility — the same-file heuristic, `# seed-ok` suppression. |
+| **bisect-driver** | Automates `git bisect` to find the exact commit that introduced a behavior change. Always resets the bisect state; refuses on a dirty tree or in-progress bisect; guards against a repro that misclassifies its own endpoints. |
+| **data-integrity-audit** | Read-only SQLite audit: `integrity_check`, `foreign_key_check`, and orphan detection (composite-FK-aware, catches bad data even with enforcement off). |
+| **etl-validate** | Read-only source-vs-target assertion after a copy/transform: row counts + an order-independent content checksum, with named missing keys. |
+| **local-secrets-manage** | Read-only hygiene audit of secret-bearing FILES: is a `.env`/`.pem`/key file tracked in git, ignored, or one `git add` from leaking. Scans names only — pair with history-leak-scan for content/history. |
+| **cve-audit** | Dependency-vulnerability audit (npm audit + pip-audit) with a deterministic parse/report layer and a configurable fail-level gate; reports pip-audit as MISSING rather than faking a result. |
+| **path-quirk-audit** | Read-only tree scan for Windows path/file corruption classes: non-ASCII bytes in `.bat`, CRLF in `.sh`, BOM/invalid UTF-8 in `.json`, builtin-shadowing root files, case-collision filenames. |
+| **shell-portability** | Read-only syntax scanner for cross-shell traps: PS 5.1's missing `&&`/`||`/ternary/`?.`/`??`, unencoded `Set-Content`, and PowerShell-isms leaking into `.sh`. |
+| **cron-task-manage** | Windows scheduled-task auditor — READ-ONLY execution always (only ever calls `schtasks /query`). Flags failing/disabled/overdue tasks; `plan` mode prints the `/create` line for you to run. |
+| **experiment-log** | Reproducibility provenance: one JSON line per run recording cmd, exit code, git commit/dirty, tool versions, and input/output file hashes. Append-only; separate from any narrative doc system. |
+| **milestone-track** | Read-only roadmap status rollup for a PRD_ROADMAP.md-style doc: checkbox/glyph/struck-item counts per milestone, fork-aware (`## CURRENT DIRECTION`), first open item as `next:`. |
+| **decision-log** | Append one dated decision line with the real system clock and a configurable timezone label (default US Central) — paste-ready for a fuller record entry. |
+
 ## Judgment & review
 
 | Skill | What it does |
@@ -55,8 +78,13 @@ node token-squeeze/test.js                                 # corpus guards (afte
 
 ## Install
 
-- **Node tools** (history-leak-scan, commit-gate, llm-eval-harness): clone
+- **Node tools** (history-leak-scan, commit-gate, llm-eval-harness, golden-lock,
+  local-secrets-manage, determinism-guard, path-quirk-audit, cve-audit,
+  shell-portability, bisect-driver, seed-control, flaky-test-detector,
+  cron-task-manage, experiment-log, milestone-track, decision-log): clone
   anywhere, run with `node`. No dependencies.
+- **Python tools** (data-integrity-audit, etl-validate): `python3` on PATH,
+  stdlib only. No dependencies.
 - **token-squeeze:** `cd token-squeeze && npm install` once (pulls
   `gpt-tokenizer`), then `node cli.js` / `node test.js`.
 - **Prose skills** (compact-io, opus-workers, trusted-advisor, audit, skill-vet, research-brief, reorg-proposal):

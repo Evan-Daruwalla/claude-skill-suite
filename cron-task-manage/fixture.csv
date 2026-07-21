@@ -1,0 +1,5 @@
+"HostName","TaskName","Next Run Time","Status","Last Run Time","Last Result","Task To Run","Scheduled Task State"
+"PC","\Backup\monthly_rebalance","1/1/2099 3:00:00 AM","Ready","1/1/2026 3:00:00 AM","0","C:\Scripts\rebalance.bat","Enabled"
+"PC","\Backup\nightly_sync","1/1/2099 2:00:00 AM","Ready","1/1/2026 2:00:00 AM","0x1","C:\Scripts\sync.bat","Enabled"
+"PC","\Backup\old_report","N/A","Disabled","1/1/2026 1:00:00 AM","0","C:\Scripts\report.bat","Disabled"
+"PC","\Microsoft\Windows\UpdateOrchestrator\Scheduled Scan","1/1/2099 4:00:00 AM","Ready","1/1/2026 4:00:00 AM","0","usoclient StartScan","Enabled"
