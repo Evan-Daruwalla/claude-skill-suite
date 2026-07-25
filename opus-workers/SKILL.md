@@ -32,7 +32,11 @@ also single commands — spawn overhead alone exceeds the work.)
 **WHY.** Keep the expensive orchestrating model as a THIN reviewer and move the BULK
 generation onto the cheapest tier that can do it faithfully. Output tokens cost more than
 input and re-enter context on every later turn, so offloading generation compounds across
-the session.
+the session. A spawned reviewer call is never the cheaper option, even at a higher
+tier/effort than the workers: it re-bills the worker's entire output as its own input,
+adds its own system-prompt overhead, and buys no catch-rate edge on a rubric that's
+already fully specified — that's exactly why review stays folded into the orchestrator
+instead.
 
 ## The loop
 
