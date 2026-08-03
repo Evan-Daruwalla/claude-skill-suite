@@ -99,12 +99,44 @@ file", "find as many security fixes / optimizations / issues as possible".
      reachable, write "could not determine" rather than implying coverage.
    - **M1 — Invariant tracing** *(highest-severity class)*. Take step 1's list
      of cross-cutting contracts — units, adjustment state, encoding, ordering,
-     timezone basis, ID space — and for each, grep **every reader and every
-     writer** of that shared state and check each one honors it. **Two modules
-     disagreeing about shared data is the worst bug class in any codebase**:
-     both sides look correct in isolation and the corruption is silent. A
-     contract with one writer that violates it is a finding even if nothing has
-     broken yet.
+     timezone basis, ID space — and for each, grep **every reader, every
+     writer, and every GUARD** of that shared state, check each one honors it,
+     then separately ask **what mechanism would catch a violation: a contract
+     whose only guard cannot arithmetically fire is as broken as one no module
+     honors.** Compare each guard's threshold against the *mathematical bound*
+     of the quantity it guards — a detector is a third role, and reader/writer
+     alone will not find it. **Two modules disagreeing about shared data is the
+     worst bug class in any codebase**: both sides look correct in isolation
+     and the corruption is silent. A contract with one writer that violates it
+     is a finding even if nothing has broken yet.
+
+     **Choose targets by grep-hit count on the shared symbol, not by doc
+     emphasis — and invert the obvious prior.** A contract restated across five
+     documents is usually one that already had its incident and got fixed; the
+     productive target is the contract stated ONCE, in a comment, in passing.
+     Hit-count is computable in one command *before* committing to a trace.
+
+     **Enumerate by the shared symbol's NAME** (the table, the column, the
+     constant) **— never by the access verb.** Verb-based enumeration
+     structurally misses dynamic/f-string names and helper-mediated access.
+     Then check the stored data's actual distinct values against the set the
+     code believes in. A silently-empty search here yields a false "clean" on
+     the highest-severity method in the sweep — cross-check it (see Rules).
+
+     **A call-graph asymmetry is an M1 signal in its own right**: an adjustment
+     helper with exactly one caller where its siblings have many usually means
+     every other path silently skips the adjustment.
+
+     **Unstated contracts count.** M1 starts from the *documented* list, but two
+     readers disagreeing about an *undocumented* shared assumption is the same
+     bug class at the same severity — the absence of a doc is not evidence the
+     contract isn't real. Report it, and flag that it was never written down.
+
+     **Three verdicts, not two: HONORED / VIOLATED / UNENFORCEABLE.** A contract
+     with no mechanical enforcement anywhere ("never run these concurrently",
+     "always open read-only") is a **finding, not a skip** — often the
+     highest-value output available on a small team, because nothing will ever
+     catch the slip.
    - **M2 — Call-site contract audit.** For each non-trivial function, compare
      what callers **actually pass** against what the body **assumes**: nulls,
      empty collections, units, error returns, ownership. Bugs concentrate at
