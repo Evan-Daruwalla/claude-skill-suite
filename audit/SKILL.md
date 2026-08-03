@@ -73,14 +73,30 @@ file", "find as many security fixes / optimizations / issues as possible".
      Cross-reference `git log` churn against test coverage; sweep TODO/FIXME/
      HACK and recent diffs. High-churn × low-coverage is statistically where
      bugs live. **This is a targeting method** — its output is where to point
-     M1–M3, so attention is concentrated rather than spread evenly.
+     M1–M3, so attention is concentrated rather than spread evenly. **Define the coverage
+     measurement or the cross-reference is meaningless**: with no coverage tool
+     installed, an import-graph fallback *overstates* coverage — a module
+     imported by a test is not necessarily exercised by it. State which measure
+     you used. The TODO/FIXME sweep is a separate, usually-empty check; run it,
+     but never let it stand in for the churn analysis.
    - **M4 — Static tooling at max strictness.** Type checker + linter +
      semgrep, cranked past whatever the project actually gates on. Shallow but
      deterministic and nearly free; clears the dumb stuff so human attention
-     goes to logic. Report what the project's own gate would have missed.
+     goes to logic. Report what the project's own gate would have missed. **If no linter is
+     installed and you may not install one, say so — the fallback floor
+     (`py_compile`, import probes) finds essentially nothing — and write a
+     ~60-line stdlib-AST pass instead** (unused imports, bare `except`,
+     `except: pass`, mutable defaults). Probe imports with
+     `PYTHONPATH=<srcdir>`: a flat `src/` with no `__init__.py` makes
+     `import src.x` fail for every module, producing ModuleNotFoundErrors that
+     look like findings and are not.
    - **M9 — Dependencies / environment / secrets.** CVEs, lockfile drift,
      unpinned or duplicated packages, leaked keys, misconfig. Lives entirely
-     outside first-party code, so M1–M3 cannot reach it and M4 only grazes it.
+     outside first-party code, so M1–M3 cannot reach it and M4 only grazes it. Check not
+     just whether versions are pinned but whether the pinned set is
+     **installable** — a correct pin whose index lives in a comment instead of
+     an `--extra-index-url` line fails on a clean machine. With no CVE database
+     reachable, write "could not determine" rather than implying coverage.
    - **M1 — Invariant tracing** *(highest-severity class)*. Take step 1's list
      of cross-cutting contracts — units, adjustment state, encoding, ordering,
      timezone basis, ID space — and for each, grep **every reader and every
@@ -93,29 +109,53 @@ file", "find as many security fixes / optimizations / issues as possible".
      what callers **actually pass** against what the body **assumes**: nulls,
      empty collections, units, error returns, ownership. Bugs concentrate at
      interfaces, not inside function bodies — so read the call sites, not just
-     the definition.
+     the definition. **Do not compare each caller to the body — that is O(n²) over a large
+     tree and low-yield. Pick a SHARED callee and diff its call sites against
+     EACH OTHER**: divergence between siblings is the signal, agreement with
+     the body is not. Duplicated helper bodies across modules are call-site
+     contracts too — two copies of one function returning `0.0` vs `NaN` on the
+     empty case is this class.
    - **M3 — Error-path review.** Read every `catch` / `except` / fallback
      branch specifically, as its own pass. Error paths are the least-executed
      code in any project and therefore the least tested. Look for: swallowed
      exceptions, partial state left behind on failure (half-written file, open
      transaction, released-then-used resource), and retries without
-     idempotency.
+     idempotency. **Then trace where the error RECORD goes.** A handler is
+     unremarkable in isolation; it becomes a finding when you follow its
+     failure artifact to the exit gate and find one sibling feeds it and
+     another doesn't. For every handler: name the artifact that proves the
+     failure happened, then check the exit path actually reads it.
    - **M7 — Spec / intent conformance.** M1–M4 check internal consistency only:
      a function named `get_adjusted_price` that returns raw prices passes every
      one of them. Compare actual behavior against the PRD, the docs, and the
      **names**. Doc-vs-code drift is its own error class — and when they
-     disagree, report the drift; do not assume the code is the intent.
+     disagree, report the drift; do not assume the code is the intent. **Committed output
+     artifacts are a spec surface too** — read the generated CSV/JSON/report
+     against what the docs claim about it; that is where a stale summary gets
+     caught. **Sequencing matters**: check every doc layer (live snapshot, PRD,
+     paper, docstring) before concluding which one drifted, or you will report
+     the correct one as wrong.
    - **M8 — Data-at-rest validation.** M1 proves writers honor the contract
      *going forward*; it cannot see rows already corrupted by a bug since
      fixed. Query the stored data and verify it currently satisfies the
      invariants: FK orphans, unexpected NULLs, duplicates, stale derived
      values, rows predating a convention change. Run actual queries — never
-     infer.
+     infer. **Validate every apparent violation against the generating source
+     line before reporting it** — on research data, column-name heuristics have
+     a brutal false-positive rate (a `gjs` column bounded by log2(K) rather than
+     1; a `p` column meaning probability in one record type and an index in
+     another). Sparsity is usually the encoding, not a defect: drop "empty
+     cells" as an invariant in favour of **"column empty in 100% of rows"** and
+     **"column whose semantics change by row"**.
    - **M6 — Dynamic verification** *(nothing above ever executes the code)*.
      Run the suite; hit the endpoints with real data; long-run under
      sanitizers/profiling where available. Config mistakes, integration
      failures, real-data-shape mismatches, and resource leaks manifest **only**
-     at runtime. No amount of reading finds a wrong env var.
+     at runtime. No amount of reading finds a wrong env var. **Pass/fail is not the
+     deliverable.** Also report whether any test configuration exists at all (a
+     green suite with no pinned strictness is weaker than it looks), the result
+     under warnings-as-errors, and the gap between modules that exist and
+     modules the suite actually collects.
 
 4. **Edge-case sweep.** Steps 1–3 ask "is this code wrong?" This asks "what
    input or state makes this code wrong?" — a different method, so it runs as
@@ -125,7 +165,13 @@ file", "find as many security fixes / optimizations / issues as possible".
      domain: empty, zero, negative, huge, duplicates, unicode, malformed, wrong
      type. Where the project already has a property-based testing library
      (Hypothesis, fast-check), use it to automate the enumeration rather than
-     hand-listing. Class checklist:
+     hand-listing. **Trace each input to its USE site, not just its parser** —
+     the dangerous defects live between `parse_args()` and the consumer (a cache
+     key that omits an argument; a path written without `makedirs`), not in the
+     argparse domain. And record a fourth outcome beyond reject/garbage/crash:
+     **(d) accepted, runs to completion, silently emits a partial result set** —
+     the most dangerous one, and the one a class checklist has no slot for.
+     Class checklist:
 
      | Class | What to try |
      |---|---|
@@ -137,7 +183,10 @@ file", "find as many security fixes / optimizations / issues as possible".
      | Filesystem | spaces or unicode in paths, case collisions, long paths, symlinks |
      | External | network down, API 429/5xx, disk full, permission denied, path not found |
 
-   - **G2 — State & timing seams.** Restart mid-operation, concurrent writers,
+   - **G2 — State & timing seams.** **Lead with this question**: does any script
+     reconstruct its results from a *directory scan* rather than from the run
+     that produced them? If so, a run killed at 60% yields an output
+     byte-shaped like a complete one. Then: restart mid-operation, concurrent writers,
      retry after partial success, clock edges (DST shift, midnight rollover,
      leap day, month/year boundary), out-of-order arrival, a scheduled run that
      silently never fires. **Unit tests essentially never cover these** — they
@@ -146,12 +195,20 @@ file", "find as many security fixes / optimizations / issues as possible".
      code makes — the file exists, the list is sorted, the network is up, the
      response is well-formed, only one instance is running, the clock moves
      forward, IDs are unique — then ask **"what happens when this is false?"**
-     one at a time. An undocumented edge case is just an uninverted assumption.
+     one at a time. An undocumented edge case is just an uninverted assumption. **Bound it or it never terminates**: seed the list from load-bearing
+     constants and documented invariants (a pre-registered threshold, a stated
+     convention), not from code shape — "dict is ordered" is true and
+     irrelevant; "this threshold is 0.0" matters because a claim rides on it.
+     An assumption you invert and find *guarded* is a real result — record it.
    - **G4 — Interaction effects.** G1–G3 are all one-variable-at-a-time. Two
      features each individually fine but broken **in conjunction** (unicode
      username × CSV export; discount × refund; retry × partial write) never
      surface from single-axis enumeration. Pair the axes deliberately —
-     especially any two that touch the same state.
+     especially any two that touch the same state. **The generator is `accumulator × key-variation`**, not a list of
+     stock pairs: pair an axis that ACCUMULATES (a cache, an append-only file, a
+     results directory) with one that VARIES THE KEY (a mutated input, a rerun,
+     a partial sweep). Stock examples borrowed from other codebases waste time —
+     confirm the pairing exists here before chasing it.
 
    **Rank each by LIKELIHOOD, and cite why — never a bare guess or a
    percentage.** The tier must name the observable reason it sits there:
@@ -255,7 +312,13 @@ file", "find as many security fixes / optimizations / issues as possible".
   a **second implementation** (e.g. the agent's search tool vs `grep -rn` in a
   shell). Not paranoia — observed live: in one repo the built-in search tool
   returned **0 files** for a pattern GNU grep matched in **21**, with no error
-  and no warning. Report which tool produced each enumeration.
+  and no warning. **Equalize path scope before comparing** — two tools with
+  different default scopes disagree for reasons that have nothing to do with
+  either tool. Reserve the cross-check for **load-bearing negatives** (a "no
+  findings" conclusion, a "clean" claim): across two full audits ~26 paired
+  searches agreed every time, so applying it to every enumeration is pure cost.
+  Its value is not catching discrepancies — it is turning an *assumed* negative
+  into a *trustworthy* one. Report which tool produced each enumeration.
 - **Likelihood is cited, never guessed, and never a percentage.** "L1 because
   it runs on every commit" is a rank; "L1, ~80% likely" is an invented number
   wearing a rank's clothes. No fabricated precision.
