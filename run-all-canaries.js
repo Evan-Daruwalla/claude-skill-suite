@@ -27,7 +27,9 @@ function findCanaries(dir, out = []) {
       if (e.name === "node_modules" || e.name === ".git" || e.name === "__pycache__") continue;
       findCanaries(p, out);
     } else if (/\.(js|py)$/.test(e.name)) {
-      if (path.resolve(p) === __filename) continue; // never discover ourselves
+      // never discover ourselves — by NAME, not just by path: this script is
+      // published into the suite too, so scanning that tree finds a *copy*.
+      if (e.name === path.basename(__filename)) continue;
       let src = "";
       try { src = fs.readFileSync(p, "utf8"); } catch { continue; }
       if (src.includes("--canary")) out.push(p);
