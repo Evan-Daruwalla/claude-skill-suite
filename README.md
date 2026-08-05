@@ -72,7 +72,8 @@ is canary-verified both ways — it must catch a planted real-format secret **an
 ignore a placeholder:
 
 ```
-node history-leak-scan/pm-secretscan.js --canary          # -> PASS (4 caught, 0 false positives)
+node run-all-canaries.js .                                 # every bundled canary, one command
+node history-leak-scan/pm-secretscan.js --canary            # -> 7 real caught, 0 false positives -> PASS
 node history-leak-scan/pm-secretscan.js --history <repo>   # scan full history
 node llm-eval-harness/score.js commit-message <file> --model <name>
 node token-squeeze/test.js                                 # corpus guards (after: npm install)
@@ -85,17 +86,20 @@ node token-squeeze/test.js                                 # corpus guards (afte
   shell-portability, bisect-driver, seed-control, flaky-test-detector,
   cron-task-manage, experiment-log, milestone-track, decision-log): clone
   anywhere, run with `node`. No dependencies.
-- **Python tools** (data-integrity-audit, etl-validate): `python3` on PATH,
+- **Python tools** (data-integrity-audit, etl-validate): `python` on PATH,
   stdlib only. No dependencies.
 - **token-squeeze:** `cd token-squeeze && npm install` once (pulls
   `gpt-tokenizer`), then `node cli.js` / `node test.js`.
-- **Prose skills** (compact-io, opus-workers, trusted-advisor, audit, skill-vet, research-brief, reorg-proposal):
+- **Prose skills** (compact-io, opus-workers, trusted-advisor, audit, skill-vet, research-brief, reorg-proposal, github-repo-polish, venue-fit):
   drop the folder into `~/.claude/skills/`; nothing to install.
 - **commit-gate PreToolUse hook:** add to `~/.claude/settings.json` under
   `hooks.PreToolUse` an entry with `"matcher": "Bash"` running
   `node "<clone>/commit-gate/hooks/pretooluse-commit-gate.js"`.
 - **commit-gate git hook:** set `SCANNER` at the top of `commit-gate/hooks/pre-commit`
   to your clone path, then `cp commit-gate/hooks/pre-commit <repo>/.git/hooks/`.
+- **code-check PostToolUse hook:** add to `~/.claude/settings.json` under
+  `hooks.PostToolUse` an entry with `"matcher": "Edit|Write"` running
+  `node "<clone>/code-check/hooks/postwrite-check.js"`.
 
 ## Design notes
 

@@ -344,7 +344,13 @@ file", "find as many security fixes / optimizations / issues as possible".
   a **second implementation** (e.g. the agent's search tool vs `grep -rn` in a
   shell). Not paranoia — observed live: in one repo the built-in search tool
   returned **0 files** for a pattern GNU grep matched in **21**, with no error
-  and no warning. **Equalize path scope before comparing** — two tools with
+  and no warning. **Backslash patterns are their own hazard, and a separate one:** a pattern
+containing `\` can be collapsed by a layer between you and grep (observed
+2026-08-05: a four-backslash ERE reached grep as one), so a backslash search
+that returns nothing proves nothing. Use `-F` for a literal Windows path, or a
+bracketed `[\]`. This does NOT explain the `auto_adjust` case above — that
+pattern has no backslash, and its cause is still undiagnosed.
+  **Equalize path scope before comparing** — two tools with
   different default scopes disagree for reasons that have nothing to do with
   either tool. Reserve the cross-check for **load-bearing negatives** (a "no
   findings" conclusion, a "clean" claim): across two full audits ~26 paired

@@ -9,8 +9,17 @@
 # commits — but NOISILY: a gate that skips silently is a dead gate.
 
 # Set this to wherever you cloned the suite:
+
 SCANNER="/path/to/claude-skill-suite/history-leak-scan/pm-secretscan.js"
 REPO=$(git rev-parse --show-toplevel)
+
+# Without this guard a missing scanner makes node exit 1, which the branch below
+# reports as "a secret was detected" — blocking the commit with a false reason.
+if [ ! -f "$SCANNER" ]; then
+  echo "commit-gate WARNING: scanner not found at $SCANNER — secret gate SKIPPED (fail-open)." >&2
+  echo "The commit proceeds UNSCANNED." >&2
+  exit 0
+fi
 
 node "$SCANNER" --staged "$REPO"
 status=$?

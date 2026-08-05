@@ -3,7 +3,7 @@
   "tasks": [
     {
       "id": "record-appendix-format",
-      "prompt": "Write ONE record appendix entry in the Trading/project-memory format for this change: 'Added a weak-password rule to the secret scanner so it catches admin1234-class values below the entropy threshold.' Use an absolute date. Cover WHAT / WHY / HOW.",
+      "prompt": "Write ONE record appendix entry in the project-memory record format for this change: 'Added a weak-password rule to the secret scanner so it catches admin1234-class values below the entropy threshold.' Use an absolute date. Cover WHAT / WHY / HOW.",
       "score": {
         "method": "checks",
         "checks": [
@@ -79,7 +79,7 @@
     },
     {
       "id": "handoff-summary",
-      "prompt": "Summarize the current state of the Skills project in exactly 3 sentences for a fresh session, based on HANDOFF.md.",
+      "prompt": "Summarize the current state of this project in exactly 3 sentences for a fresh session, based on HANDOFF.md.",
       "score": {
         "method": "golden",
         "refModel": "fable-5",

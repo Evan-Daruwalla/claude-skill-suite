@@ -147,7 +147,10 @@ function bisect(opts) {
     git(dir, ["bisect", "good", opts.good]);
     // git drives the loop: checkout -> sh -c "<cmd>" -> classify by exit code.
     const run = git(dir, ["bisect", "run", "sh", "-c", opts.cmd], true);
-    const m = run.out.match(/([0-9a-f]{7,40}) is the first bad commit/);
+    // git quotes the term in newer versions: 2.55 prints "is the first 'bad'
+    // commit", older prints "is the first bad commit". Accept both, or the
+    // driver silently never identifies a culprit.
+    const m = run.out.match(/([0-9a-f]{7,40}) is the first '?bad'? commit/);
     if (m) culprit = git(dir, ["rev-parse", m[1]], true).out.trim() || m[1];
     else err = `bisect did not identify a first bad commit — check the repro command classifies good/bad correctly:\n${run.out.trim().slice(-800)}`;
   } catch (e) {

@@ -52,11 +52,7 @@ A frozen regression is pinned byte-exact — but a result is only reproducible i
 you know the exact inputs and versions behind it. Log the run:
 
 ```
-node experiment-log.js log \
-  --cmd "python run_backtest.py --sleeve value --report" \
-  --in price_cache.db,config/value.yaml \
-  --out reports/value_report.txt \
-  --note "monthly rebalance, value sleeve"
+node experiment-log.js log --cmd "python run_backtest.py --sleeve value --report" --in price_cache.db,config/value.yaml --out reports/value_report.txt --note "monthly rebalance, value sleeve"
 ```
 
 The line now carries the git commit (was the tree dirty?), the Python version,

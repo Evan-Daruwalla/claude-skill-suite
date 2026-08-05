@@ -96,4 +96,4 @@ well-formed line whose date equals the system date and whose zone label matches
 the current UTC offset (recomputed independently in the canary from the same
 `ZONES` map), `--why` appears only when given, a second `add` appends without
 disturbing the first line, and missing decision text exits 2 without creating a
-file. MUST print `CANARY PASS 14/14` before you trust a result.
+file. MUST print `CANARY PASS n/n` before you trust a result.

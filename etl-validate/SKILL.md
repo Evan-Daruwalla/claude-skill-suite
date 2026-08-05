@@ -49,15 +49,14 @@ sqlite:<db>:<table>     a table in a SQLite DB, opened read-only
 ```
 
 The `sqlite:` form is split from the RIGHT once, so a Windows drive letter
-survives: `sqlite:D:\ClaudeCode\Trading\var\trades.db:price_cache` parses to
-db=`D:\...\trades.db`, table=`price_cache`.
+survives: `sqlite:D:\data\warehouse.db:prices` parses to
+db=`D:\data\warehouse.db`, table=`prices`.
 
-## Examples (grounded in real project facts)
+## Examples
 
-- **Verify a price_cache rebuild moved every row** (Trading — `price_cache` is
-  split-adjusted, dividend-UNadjusted; a rebuild must preserve every row).
-  Dump the pre-rebuild table to CSV, rebuild, then reconcile:
-  `python etl_validate.py --src csv:price_cache_before.csv --dst sqlite:D:\ClaudeCode\Trading\var\trades.db:price_cache --key symbol`
+- **Verify a cache-table rebuild moved every row.** Dump the pre-rebuild table
+  to CSV, rebuild, then reconcile:
+  `python etl_validate.py --src csv:prices_before.csv --dst sqlite:D:\data\warehouse.db:prices --key symbol`
   MATCH on count and checksum means the rebuild was a faithful copy; a mismatch
   with `--key symbol` names the first 10 symbols that fell out.
 - **Reconcile two SQLite tables** (e.g. a staging table vs the live one after a
@@ -83,7 +82,7 @@ db=`D:\...\trades.db`, table=`price_cache`.
 
 - PowerShell 5.1: endpoints contain no shell metacharacters, but quote a `--src`
   whose path has spaces: `--src "csv:C:\my data\src.csv"`.
-- Python 3 is on PATH as `python`; Trading's venv Python works too. No
+- Python 3 is on PATH as `python`; a project venv's Python works too. No
   `ANTHROPIC_API_KEY` needed — this makes no model calls.
 
 ## Exit codes

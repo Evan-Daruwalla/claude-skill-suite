@@ -272,4 +272,6 @@ function main() {
   const root = dir ? path.resolve(dir) : process.cwd();
   process.exit(cmdAudit(root, { fixPrint: argv.includes("--fix-print") }));
 }
-main();
+// documented exit 2 for "not a git repo / git unavailable": without this the
+// throw at getRepoRoot escapes as an uncaught exception (exit 1 + stack trace).
+try { main(); } catch (e) { console.error("error: " + (e && e.message ? e.message : e)); process.exit(2); }

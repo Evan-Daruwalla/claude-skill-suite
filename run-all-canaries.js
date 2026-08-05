@@ -1,0 +1,60 @@
+#!/usr/bin/env node
+/*
+ * run-all-canaries — execute every bundled `--canary` self-test in a skills tree.
+ *
+ * The suite ships ~16 canaries and nothing ever ran them, so a skill could rot
+ * silently: bisect-driver sat at CANARY FAIL 8/11 in both the live and the
+ * published copy until an audit ran it by hand. This is the missing runner.
+ *
+ *   node run-all-canaries.js [skills-root]      (default: ~/.claude/skills)
+ *
+ * Exit 0 only if every canary passes; 1 otherwise. Deterministic, no model calls.
+ */
+"use strict";
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const { spawnSync } = require("child_process");
+
+const root = process.argv[2] || path.join(os.homedir(), ".claude", "skills");
+if (!fs.existsSync(root)) { console.error(`no such skills root: ${root}`); process.exit(2); }
+
+// a canary is any .js/.py in the tree whose own source offers --canary
+function findCanaries(dir, out = []) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      if (e.name === "node_modules" || e.name === ".git" || e.name === "__pycache__") continue;
+      findCanaries(p, out);
+    } else if (/\.(js|py)$/.test(e.name)) {
+      if (path.resolve(p) === __filename) continue; // never discover ourselves
+      let src = "";
+      try { src = fs.readFileSync(p, "utf8"); } catch { continue; }
+      if (src.includes("--canary")) out.push(p);
+    }
+  }
+  return out;
+}
+
+const files = findCanaries(root).sort();
+if (!files.length) { console.error(`no canaries found under ${root}`); process.exit(2); }
+
+let pass = 0;
+const failed = [];
+for (const f of files) {
+  const label = path.relative(root, f).replace(/\\/g, "/");
+  const cmd = f.endsWith(".py") ? "python" : "node";
+  const r = spawnSync(cmd, [f, "--canary"], { encoding: "utf8", timeout: 120000 });
+  // a canary that cannot even start is a failure, not a skip
+  const out = ((r.stdout || "") + (r.stderr || "")).trim().split("\n").filter(Boolean);
+  // prefer the canary's own verdict line: several canaries end on a deliberate
+  // negative-test fixture, so the LAST line reads like an error next to "PASS".
+  const verdict = out.filter((l) => /CANARY (PASS|FAIL)|canary:/i.test(l)).pop();
+  const last = (verdict || out[out.length - 1] || "(no output)").slice(0, 90);
+  if (r.status === 0) { pass++; console.log(`  PASS  ${label}  ${last}`); }
+  else { failed.push(label); console.log(`  FAIL  ${label}  [exit ${r.status}]  ${last}`); }
+}
+
+console.log(`\n=== ${pass}/${files.length} canaries passed ===`);
+if (failed.length) { console.log(`failed: ${failed.join(", ")}`); process.exit(1); }
+process.exit(0);

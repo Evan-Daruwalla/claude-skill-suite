@@ -96,7 +96,10 @@ function detect(line, file) {
   const m = ASSIGN.exec(line);
   if (m) {
     const val = m[2];
-    if (val.length >= 20 && shannon(val) >= 3.5 && !isPlaceholder(val)) return "high-entropy-assignment";
+    // 16 must track ASSIGN's {16,}: a value the regex accepts must never be
+    // silently dropped here. At 16 chars, shannon>=3.5 still demands ~12
+    // distinct characters, so this stays high-signal.
+    if (val.length >= 16 && shannon(val) >= 3.5 && !isPlaceholder(val)) return "high-entropy-assignment";
   }
   const w = WEAK_PW.exec(line);
   if (w && !isPlaceholder(w[2])) return "weak-password";
@@ -110,7 +113,7 @@ function scanRepo(repo, mode) {
       mode === "staged"
         ? ["-C", repo, "diff", "--cached", "--no-color", "-U0"]
         : ["-C", repo, "log", "-p", "--all", "--no-color", "-U0"];
-    const git = spawn("git", args, { maxBuffer: 1 << 30 });
+    const git = spawn("git", args);
     const findings = [];
     let commit = "(working)", file = "?", buf = "";
     const onLine = (line) => {
@@ -123,7 +126,11 @@ function scanRepo(repo, mode) {
         let p = line.slice(4).replace(/\t.*$/, "");        // drop trailing tab metadata
         if (p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1); // unwrap C-quoted path
         file = p.replace(/^b\//, "");                       // strip diff b/ prefix ("/dev/null" stays)
-        if (file !== "/dev/null" && SENSITIVE_FILE.test(file) && !FILE_EXEMPT.test(file) && !isHeuristicExempt(file)) {
+        // NOT gated on isHeuristicExempt: that exempts *.txt/*.md, so `.env.txt`
+        // (what Notepad writes) would bypass the name rule entirely. The name IS
+        // the finding here regardless of extension; FILE_EXEMPT still covers
+        // .env.example and friends.
+        if (file !== "/dev/null" && SENSITIVE_FILE.test(file) && !FILE_EXEMPT.test(file)) {
           findings.push({ commit, file, rule: "sensitive-filename", snippet: "(file of this name should not be committed)" });
         }
       }
@@ -138,9 +145,16 @@ function scanRepo(repo, mode) {
       let i;
       while ((i = buf.indexOf("\n")) >= 0) { onLine(buf.slice(0, i)); buf = buf.slice(i + 1); }
     });
-    git.stderr.on("data", () => {});
-    git.on("close", () => { if (buf) onLine(buf); resolve({ repo, findings }); });
-    git.on("error", () => resolve({ repo, findings: [], error: true }));
+    let stderr = "";
+    git.stderr.on("data", (d) => { stderr += d.toString("utf8"); });
+    // a non-zero git exit means the scan DID NOT RUN (not a git repo, bad path,
+    // no commits yet). Reporting "clean" there is a fail-open in a security
+    // gate: callers read exit 0 as "allow". Surface it instead.
+    git.on("close", (code) => {
+      if (buf) onLine(buf);
+      resolve({ repo, findings, error: code !== 0, stderr: stderr.trim() });
+    });
+    git.on("error", (e) => resolve({ repo, findings: [], error: true, stderr: String(e.message || e) }));
   });
 }
 
@@ -193,12 +207,23 @@ async function runCanary() {
 async function main() {
   const argv = process.argv.slice(2);
   if (argv.includes("--canary")) { process.exit((await runCanary()) ? 0 : 1); }
+  const KNOWN = new Set(["--staged", "--history", "--canary"]);
+  // an unrecognised flag used to be filtered out silently, so a typo like
+  // `--stage` fell through to history mode and the staged diff — the thing the
+  // gate exists to check — was never scanned.
+  const bad = argv.filter((a) => a.startsWith("--") && !KNOWN.has(a));
+  if (bad.length) { console.error(`unknown flag(s): ${bad.join(" ")}\nusage: pm-secretscan.js --history|--staged|--canary <repo>...`); process.exit(2); }
   const mode = argv.includes("--staged") ? "staged" : "history";
   const repos = argv.filter((a) => !a.startsWith("--"));
   if (!repos.length) { console.error("usage: pm-secretscan.js --history|--staged|--canary <repo>..."); process.exit(2); }
   let total = 0;
   for (const repo of repos) {
-    const { findings } = await scanRepo(repo, mode);
+    const { findings, error, stderr } = await scanRepo(repo, mode);
+    if (error) {
+      console.error(`\n### ${repo} — SCAN FAILED (git exited non-zero); NOT clean, just unscanned`);
+      if (stderr) console.error(`  ${stderr.split("\n")[0]}`);
+      process.exit(2);
+    }
     // dedupe identical (file,rule,snippet) across history versions
     const seen = new Set(), uniq = [];
     for (const f of findings) { const k = f.file + f.rule + f.snippet; if (!seen.has(k)) { seen.add(k); uniq.push(f); } }

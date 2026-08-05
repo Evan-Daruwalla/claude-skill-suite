@@ -9,7 +9,7 @@
  * Rules (same-file heuristic — see Known limits in SKILL.md):
  *   PY  random.<fn>(     flagged if NO  random.seed(                  in that file
  *   PY  np.random.<fn>(  flagged if NO  np.random.seed( or default_rng( in file
- *   JS  Math.random(     ALWAYS flagged (no seed API; use a seeded PRNG)
+ *   JS  Math.random(     ALWAYS flagged (no seed API; use a seeded PRNG)   // seed-ok
  *
  * Suppression: a `# seed-ok` (py) or `// seed-ok` (js/ts) comment ON THE LINE
  * silences that one finding.
@@ -72,7 +72,7 @@ function scanFile(file) {
       }
     }
   } else {
-    // .js / .ts — Math.random( always unseeded
+    // .js / .ts — Math.random( always unseeded   // seed-ok
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
       if (JS_SEED_OK.test(l)) continue;
@@ -141,7 +141,7 @@ function runCanary() {
     const jsBad = W("bad.js", "const r = Math.random();\nconst s = Math.random(); // seed-ok\n");
     const jf = scanFile(jsBad).findings;
     check(jf.length === 1 && jf[0].line === 1, "Math.random flagged, // seed-ok suppressed");
-    const tsBad = W("bad.ts", "export const r = Math.random();\n");
+    const tsBad = W("bad.ts", "export const r = Math.random();\n");   // seed-ok
     check(scanFile(tsBad).findings.length === 1, "Math.random flagged in .ts");
 
     // (e) # seed-ok suppresses python
@@ -186,7 +186,7 @@ Usage:
 Rules (same-file heuristic):
   PY  random.<fn>(     flagged if the file has no  random.seed(
   PY  np.random.<fn>(  flagged if the file has no  np.random.seed( or default_rng(
-  JS  Math.random(     always flagged (no seed API — use a seeded PRNG)
+  JS  Math.random(     always flagged (no seed API — use a seeded PRNG)   // seed-ok
 Suppress one line with  # seed-ok  (py)  or  // seed-ok  (js/ts).
 
 Recurses directories over .py/.js/.ts (skips node_modules/.git/__pycache__/venv/dist/build).

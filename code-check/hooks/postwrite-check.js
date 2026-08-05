@@ -97,6 +97,19 @@ function main() {
     /* best-effort; a failed write just means the next edit re-nudges */
   }
 
+  // one state file per session, and sessions are never revisited — prune stale
+  // ones so tmp does not accumulate a file per session forever.
+  try {
+    const cutoff = now - 24 * 60 * 60 * 1000;
+    for (const f of fs.readdirSync(os.tmpdir())) {
+      if (!/^claude-code-check-.*\.json$/.test(f)) continue;
+      const p = path.join(os.tmpdir(), f);
+      try { if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p); } catch { /* skip */ }
+    }
+  } catch {
+    /* best-effort housekeeping only */
+  }
+
   if (!due) return 0;
 
   const list = touched.join(", ") + (more > 0 ? ` (+${more} more)` : "");
@@ -117,4 +130,43 @@ function main() {
   return 0;
 }
 
+// self-test: fires on every Edit/Write, and stdout must be the additionalContext
+// envelope — a plain print here reaches the debug log, not the model.
+function runCanary() {
+  const { spawnSync } = require("child_process");
+  let pass = 0, fail = 0;
+  const check = (c, d) => { if (c) pass++; else { fail++; console.log("  FAIL: " + d); } };
+  const fire = (ev) => spawnSync(process.execPath, [__filename], {
+    input: JSON.stringify(ev), encoding: "utf8",
+  });
+  const sid = "canary-" + process.pid;
+  const ev = (file, session) => ({ session_id: session || sid, tool_input: { file_path: file } });
+
+  let r = fire(ev("C:/tmp/thing.js"));
+  const out = (r.stdout || "").trim();
+  check(out.includes("additionalContext"), "emits the additionalContext envelope (not a bare print)");
+  check(out.includes("hookEventName"), "declares hookEventName");
+  check(out.includes("thing.js"), "names the file that was written");
+
+  // second edit inside the debounce window must stay quiet
+  r = fire(ev("C:/tmp/other.js"));
+  check((r.stdout || "").trim() === "", "debounced: a burst nudges once");
+
+  check((fire(ev("C:/tmp/notes.md")).stdout || "").trim() === "", "docs are not code -> silent");
+  check((fire(ev("C:/tmp/data.json")).stdout || "").trim() === "", "config is not code -> silent");
+  check((fire({ session_id: sid }).stdout || "").trim() === "", "missing file_path -> silent");
+  r = spawnSync(process.execPath, [__filename], { input: "not json", encoding: "utf8" });
+  check(r.status === 0, "malformed stdin never blocks the tool call");
+
+  try {
+    const os = require("os");
+    fs.unlinkSync(path.join(os.tmpdir(), `claude-code-check-${sid}.json`));
+  } catch { /* already pruned */ }
+
+  const ok = fail === 0;
+  console.log(`CANARY ${ok ? "PASS" : "FAIL"} ${pass}/${pass + fail}`);
+  return ok;
+}
+
+if (process.argv.includes("--canary")) process.exit(runCanary() ? 0 : 1);
 process.exit(main());

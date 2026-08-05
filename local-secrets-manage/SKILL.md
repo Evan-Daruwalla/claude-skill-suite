@@ -100,4 +100,4 @@ Builds a throwaway git repo, plants a committed `.env` (→ `TRACKED-SECRET`), a
 on-disk `.env.local` (→ `UNIGNORED`), an ignored `.env.ok` (→ `OK`), and an exempt
 `.env.example`; asserts all four verdicts, exit 1, and the exact `--fix-print`
 lines — then asserts a clean repo exits 0 and a non-repo exits 2. Cleans up.
-MUST print `CANARY PASS 9/9` before you trust a result.
+MUST print `CANARY PASS n/n` before you trust a result.
