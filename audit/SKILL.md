@@ -344,12 +344,21 @@ file", "find as many security fixes / optimizations / issues as possible".
   a **second implementation** (e.g. the agent's search tool vs `grep -rn` in a
   shell). Not paranoia — observed live: in one repo the built-in search tool
   returned **0 files** for a pattern GNU grep matched in **21**, with no error
-  and no warning. **Backslash patterns are their own hazard, and a separate one:** a pattern
+  and no warning. **Root-caused, and worth memorising: a single malformed glob
+  in `.gitignore` silently hides THE ENTIRE REPO from every ripgrep-backed
+  tool.** The line was `*}` (intended to ignore stray files ending in `}`).
+  `{`/`}` are alternation syntax to ripgrep's globset, so an unmatched `}` is a
+  parse error, the ignore matcher fails CLOSED, and every search returns a
+  confident zero. git itself is unaffected, so the repo looks healthy. Proven by
+  A/B: two identical trees differing only in that line returned 3 files vs 0.
+  Fix: escape it (`*\}`) or bracket it (`*[}]`); both keep git's behaviour
+  identical. **When a whole-repo search comes back empty, grep the ignore files
+  for `{`/`}` before believing it.** **Backslash patterns are their own hazard, and a separate one:** a pattern
 containing `\` can be collapsed by a layer between you and grep (observed
 2026-08-05: a four-backslash ERE reached grep as one), so a backslash search
 that returns nothing proves nothing. Use `-F` for a literal Windows path, or a
 bracketed `[\]`. This does NOT explain the `auto_adjust` case above — that
-pattern has no backslash, and its cause is still undiagnosed.
+pattern has no backslash — that one was the malformed-glob bug above.
   **Equalize path scope before comparing** — two tools with
   different default scopes disagree for reasons that have nothing to do with
   either tool. Reserve the cross-check for **load-bearing negatives** (a "no
