@@ -1,16 +1,12 @@
 ---
 name: golden-lock
-description: >
-  Freeze ANY output as a byte-exact golden baseline and diff on change — one
-  engine over three inputs: a command's stdout, a fixture file, or a prompt/text
-  asset. "freeze" records the baseline (output.txt + meta.json under .golden/);
-  "check" re-produces it and fails with a line-numbered diff on any drift,
-  comparing bytes AND exit code. Generalizes frozen-regression-test discipline
-  (an output pinned byte-exact) to arbitrary outputs. Use when the user says
-  "freeze this output", "golden test", "lock the
-  baseline", "snapshot freeze", "did the output change", "prompt regression",
-  "guard against output drift", or wants a fixture/prompt/command pinned so any
-  change is a failing diff. Deterministic, zero dependencies, no model calls.
+description: >-
+  Freeze ANY output as a byte-exact golden baseline — command stdout, fixture
+  file, or prompt/text asset — under .golden/; "check" re-produces it and
+  fails with a line-numbered diff on drift, comparing bytes AND exit code. Use
+  when: "freeze this output", "golden test", "lock the baseline", "did the
+  output change", "prompt regression", "guard against output drift". Zero
+  deps.
 ---
 
 # golden-lock — freeze an output, diff on change

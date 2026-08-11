@@ -1,15 +1,12 @@
 ---
 name: seed-control
-description: >
-  Read-only static scan for UNSEEDED randomness — the reproducibility guard.
-  Flags Python random.<fn>() in any file with no random.seed() anywhere in it,
-  np.random.<fn>() with no np.random.seed()/default_rng() in the file, and every
-  JS/TS Math.random() (no seed API exists). Reports file:line:snippet, exit 1 on
-  findings. Suppress a known-fine line with a `# seed-ok` / `// seed-ok` comment.
-  Use when the user says "scan for unseeded randomness", "reproducibility check",
-  "did I forget to seed", "seed-control", or before pinning a frozen/regression
-  run whose output must be byte-stable. Deterministic, zero dependencies, no
-  model calls, writes nothing.
+description: >-
+  Read-only static scan for UNSEEDED randomness: Python random.*/np.random.*
+  with no seed call in the file, every JS/TS Math.random() (no seed API
+  exists). Reports file:line:snippet, exit 1 on findings; suppress a
+  known-fine line with # seed-ok / // seed-ok. Use when: "reproducibility
+  check", "did I forget to seed", "seed-control", before pinning a frozen or
+  regression run. Zero deps, writes nothing.
 ---
 
 # seed-control — catch unseeded randomness before it breaks reproducibility

@@ -1,16 +1,12 @@
 ---
 name: etl-validate
-description: >
+description: >-
   Read-only source-vs-target assertion after a data transform or copy — prove
-  every row actually moved. Compares a CSV file or a SQLite table against another
-  (--src / --dst as csv:<path> | sqlite:<db>:<table>) on two axes: row counts
-  equal, and a content checksum equal (each row's selected columns tab-joined,
-  sha256'd, then XOR-combined so the result is order-independent by construction).
-  Optional --key <col> names the src keys missing from dst (first 10), turning a
-  bare mismatch into named rows. Use when the user says "validate the copy",
-  "did every row move", "verify the ETL", "source vs target check", "reconcile
-  the table after a rebuild", or after a cache/table rebuild. SQLite opens
-  mode=ro. Deterministic, Python stdlib only, no model calls.
+  every row moved. Compares CSV or SQLite endpoints (--src/--dst as csv:<path>
+  | sqlite:<db>:<table>) on row count + an order-independent XOR content
+  checksum; --key <col> names the first 10 missing keys. SQLite opens mode=ro.
+  Use when: "validate the copy", "did every row move", "verify the ETL",
+  "reconcile the table after a rebuild". Python stdlib only.
 ---
 
 # etl-validate — did every row actually land?

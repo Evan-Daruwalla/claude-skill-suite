@@ -1,15 +1,13 @@
 ---
 name: opus-workers
-description: >
-  When an expensive model is orchestrating (e.g. Claude Fable 5 / Opus at high effort) and
-  you're about to spin up subagents or a workflow for non-trivial work, run the WORKER agents
-  on a cheaper tier — one tier down (e.g. Opus) at medium/high effort for substantive
-  generation, two tiers down (e.g. Sonnet) at low/medium for mechanical bulk — after
-  pre-registering a review rubric, then have the orchestrator review each output against that
-  rubric: accept + present, or send back with specific pointers. Cheaper workers do the bulk
-  generation; the orchestrator stays a thin reviewer. Skip for trivial one-shot tasks (inline),
-  for GATED actions (commit/push/publishing stay with the orchestrator), and when no cheaper
-  tier fits the task.
+description: >-
+  When spawning subagents or workflows for non-trivial work and a tier
+  strictly cheaper than the session model fits: run doer agents on that
+  cheaper tier (Opus medium/high for substantive generation, Sonnet low/medium
+  for mechanical bulk) after pre-registering a review rubric, then review each
+  output AS the session model — accept or send back with pointers. Skip for
+  trivial one-shots, for GATED actions (commit/push/public changes stay with
+  the orchestrator), and when no cheaper tier fits.
 ---
 
 # opus-workers — the orchestrator reviews, cheaper tiers do the bulk work

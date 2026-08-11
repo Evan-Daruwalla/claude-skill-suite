@@ -1,16 +1,13 @@
 ---
 name: experiment-log
-description: >
-  Reproducibility provenance for a single run — runs a command and appends ONE
-  JSON line capturing exactly what produced the result: ISO timestamp, cwd, cmd,
-  exit code, duration, git {commit, dirty}, tool versions {node, python}, and the
-  sha256 of every declared input (hashed before the run) and output (after), plus
-  a note. Append-only JSONL; never rewrites the log. Use when the user says "log
-  this run", "record provenance", "experiment log", "make this run reproducible",
-  "what produced this output", "capture inputs/versions for this backtest", or
-  wants a run pinned so it can be reproduced. Machine provenance only — it never
-  touches HANDOFF.md or the project record (project-memory owns the narrative).
-  Deterministic, zero dependencies, no model calls.
+description: >-
+  Reproducibility provenance for a single run: executes a command and appends
+  ONE JSON line — ISO timestamp, cwd, cmd, exit, duration, git {commit,
+  dirty}, node/python versions, sha256 of declared inputs (hashed before) and
+  outputs (after), note. Append-only JSONL; never touches HANDOFF.md or the
+  record (project-memory owns the narrative). Use when: "log this run",
+  "record provenance", "experiment log", "make this run reproducible", "what
+  produced this output". Zero deps.
 ---
 
 # experiment-log — reproducibility provenance for a run

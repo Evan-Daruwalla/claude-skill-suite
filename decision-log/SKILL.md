@@ -1,15 +1,11 @@
 ---
 name: decision-log
-description: >
-  Append one dated decision line — the lightweight per-decision line, NOT the
-  project record. Reads the REAL system clock at runtime and stamps the zone
-  from an editable map (default US Central: UTC-6 → CST, UTC-5 → CDT, else
-  literal UTC±H:MM), writing "- YYYY-MM-DD HH:MM <ZONE> — decided: <decision>"
-  (plus " (why: <reason>)" when given) to an append-only DECISIONS.md; the
-  printed line is paste-ready FOR a project-memory record entry. Use when the
-  user says "log this decision", "decision-log", "note that we decided X",
-  "record the call we just made", or wants a quick dated decision line without
-  opening the append-only record. Deterministic, zero dependencies, no model calls.
+description: >-
+  Appends ONE dated decision line to append-only DECISIONS.md — reads the REAL
+  clock, stamps the zone by UTC offset (UTC-6→CST, UTC-5→CDT), prints a
+  paste-ready line for a record entry. The lightweight per-decision line, NOT
+  the project record. Use when: "log this decision", "decision-log", "note
+  that we decided X", "record the call we just made". Zero deps.
 ---
 
 # decision-log — append a dated decision line

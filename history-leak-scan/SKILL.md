@@ -1,16 +1,13 @@
 ---
 name: history-leak-scan
-description: >
-  Deterministic secret scanner for git repositories — no dependencies, no API key.
-  Scans full git history (every version ever committed) or the staged diff for
-  leaked credentials: per-provider keys (AWS, GitHub incl. fine-grained PATs,
-  Slack, Google, Stripe, Alpaca, Anthropic, OpenAI, npm, HuggingFace, SendGrid,
-  Twilio, Resend), private-key blocks, JWTs, sensitive filenames (.env, .pem,
-  id_rsa, *_keys.env), high-entropy assignments, and weak/short
-  passwords. Use when the user says "scan for secrets", "leak scan", "check for
-  leaked keys/credentials", "did I commit a secret", "history-leak-scan", or after
-  any repo goes public / any suspected exposure. The same scanner backs commit-gate
-  (staged mode). Reads .claude/secrets-inventory.md for what credentials exist.
+description: >-
+  Deterministic secret scanner for git repos — full history (--history) or
+  staged diff (--staged): 17 provider-key rules, private-key blocks, JWTs,
+  sensitive filenames (.env, .pem, id_rsa, *_keys.env), high-entropy +
+  weak-password heuristics. Backs commit-gate in staged mode. Use when: "scan
+  for secrets", "leak scan", "did I commit a secret", after any repo goes
+  public or any suspected exposure. Reads .claude/secrets-inventory.md. No
+  deps, no API key.
 ---
 
 # history-leak-scan — deterministic secret scanner

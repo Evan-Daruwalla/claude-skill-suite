@@ -1,6 +1,14 @@
 ---
 name: audit
-description: Full sweeping project audit run COLD — a fresh auditor with no inherited session belief, sweeping by nine methods (invariant tracing, call-site contracts, error paths, static tooling, churn×coverage targeting, dynamic verification, spec conformance, data-at-rest, deps/env/secrets) plus a four-generator edge-case sweep ranked by how likely each case is to actually occur. Produces severity-ranked findings and priority-ranked edge cases, each with a surgical fix. Use when the user says "audit", "full audit", "sweeping audit", "audit everything", "find issues/security fixes/optimizations", "check for inconsistencies", "find edge cases", or "what could break". Findings only by default; fixes happen after approval.
+description: >-
+  Full sweeping project audit run COLD — a fresh auditor with no inherited
+  session belief; nine methods (invariant tracing, call-site contracts, error
+  paths, static tooling, churn×coverage, dynamic verification, spec
+  conformance, data-at-rest, deps/env/secrets) plus a four-generator edge-case
+  sweep ranked by cited likelihood. Severity-ranked findings and
+  priority-ranked edge cases, each with a surgical fix. Use when: "audit",
+  "full audit", "find issues/security fixes/optimizations", "find edge cases",
+  "what could break". Findings only by default; fixes after approval.
 ---
 
 # Project Audit

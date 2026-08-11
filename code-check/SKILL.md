@@ -1,13 +1,12 @@
 ---
 name: code-check
-description: >
-  Post-write verification pass on code you just wrote or edited: re-read the
-  real diff, make it actually run, confirm non-trivial logic has one runnable
-  check behind it, and confirm every changed line traces to the request. Fires
-  from the PostToolUse hook after Edit/Write on a code file, and on "check
-  this", "verify that code", "did that actually run", "code-check". Not a
-  full audit (/audit) and not a bug hunt (/code-review) — this is the
-  did-what-I-just-wrote-actually-work pass.
+description: >-
+  Post-write verification pass on code just written: re-read the real diff,
+  make it actually run (paste real output), one runnable check behind
+  non-trivial logic, every changed line traces to the request. Fires from the
+  PostToolUse hook after Edit/Write on a code file; also "check this", "verify
+  that code", "did that actually run", "code-check". Not a full audit
+  (/audit), not a bug hunt (/code-review).
 license: MIT
 ---
 

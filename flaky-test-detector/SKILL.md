@@ -1,17 +1,12 @@
 ---
 name: flaky-test-detector
-description: >
-  Run a test command N times and classify its stability: STABLE-PASS (every run
-  exited 0), STABLE-FAIL (every run failed IDENTICALLY — a consistently red test
-  is a bug, not flake, and is labeled as such), or FLAKY (exit codes varied
-  across runs — the finding). Records each run's exit code + wall-clock duration,
-  prints a per-run table + pass/fail rates, and can save each run's stdout+stderr
-  to numbered files for diffing (--keep-logs). The harness is deterministic; the
-  subject under test may not be — that is the point. Use when the user says
-  "is this test flaky", "flaky test", "detect flakiness", "does this test pass
-  reliably", "run it N times", "why does this test fail intermittently", or wants
-  a test/command re-run repeatedly to check for non-determinism. Deterministic
-  harness, zero dependencies, no model calls.
+description: >-
+  Runs a test command N times and classifies: STABLE-PASS, STABLE-FAIL
+  (identical failure every run = a bug, not flake, labeled as such), or FLAKY
+  (exit codes varied — the finding). Per-run exit+duration table, pass/fail
+  rates, --keep-logs saves numbered outputs for diffing. Use when: "is this
+  test flaky", "does it pass reliably", "run it N times", "why does this fail
+  intermittently". Deterministic harness, zero deps.
 ---
 
 # flaky-test-detector — run N times, classify stability

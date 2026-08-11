@@ -1,13 +1,12 @@
 ---
 name: venue-fit
-description: >
-  Score a draft against ONE venue's real published reviewer criteria before
-  submitting — per-criterion verdict with evidence quoted from the draft, plus
-  the concrete gap for anything short. Refuses to emit an acceptance
-  probability. Learns only from REAL post-submission reviewer feedback, stored
-  as data. Use when the user says "venue-fit", "would this get into <venue>",
-  "review this against <venue/workshop>", "am I ready to submit", or names a
-  submission target. Must be invoked — never fires on its own.
+description: >-
+  Scores a draft against ONE venue's real published reviewer criteria —
+  per-criterion verdict with evidence quoted from the draft, plus the concrete
+  gap for anything short. REFUSES to emit an acceptance probability. Learns
+  only from real post-submission reviewer feedback, stored as data. Must be
+  invoked — never fires on its own: "venue-fit", "would this get into
+  <venue>", "review this against <venue>", "am I ready to submit".
 argument-hint: "<venue> [track]"
 license: MIT
 ---

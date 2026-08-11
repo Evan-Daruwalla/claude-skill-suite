@@ -1,18 +1,13 @@
 ---
 name: determinism-guard
-description: >
-  EPHEMERAL invariance checker — run a command repeatedly in one shot and prove
-  it produces the SAME output every time. Three checks over one engine: default
-  runs `--cmd` N times and compares stdout + exit code byte-exact across runs
-  (first-divergence line diff on failure); `--files "a,b,c"` ALSO sha256s each
-  listed file after every run to catch non-reproducible rebuilds; `--shuffle-stdin
-  <file>` runs the command twice — input as-is vs. its lines shuffled by a
-  fixed-seed PRNG — to catch order-dependence. No baselines are stored (freeze an
-  output across time with golden-lock instead). Use when the user says "is this
-  deterministic", "does it give the same output every run", "check for flakiness",
-  "reproducible build check", "is my output order-dependent", "determinism-guard",
-  or wants a command proven stable before it is frozen or scheduled. Deterministic,
-  zero dependencies, no model calls.
+description: >-
+  Ephemeral invariance checker — run a command N times and prove
+  byte-identical stdout + exit code (first-divergence diff on failure);
+  --files sha256s listed artifacts per run; --shuffle-stdin catches
+  order-dependence. No stored baselines — freezing an output across time is
+  golden-lock. Use when: "is this deterministic", "same output every run",
+  "reproducible build check", "is my output order-dependent", before freezing
+  or scheduling. Zero deps.
 ---
 
 # determinism-guard — prove an output never varies

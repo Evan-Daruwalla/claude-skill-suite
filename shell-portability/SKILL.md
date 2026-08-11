@@ -1,20 +1,13 @@
 ---
 name: shell-portability
-description: >
-  Read-only SYNTAX/semantics scanner for cross-shell traps in shell scripts —
-  the proactive counterpart to your own reactive troubleshooting runbook.
-  Flags, with file:line + why it breaks + the PowerShell-5.1-safe fix: in
-  .ps1/.psm1, the && / || pipeline chain (PS 5.1 parser error), ?: ternary,
-  ?. null-conditional and ?? / ??= null-coalescing (PS7-only), Read-Host /
-  pause / Out-GridView (block a non-interactive or scheduled run), Set-Content
-  / Add-Content / Out-File written WITHOUT -Encoding (ANSI/UTF-16 default
-  corrupts UTF-8), and bash-style NAME=value assignments; in .sh/.bash,
-  PowerShell-isms ($env:NAME, Verb-Noun cmdlet calls). Use when the user says
-  "shell-portability", "scan for PS5.1 traps", "will this script run on
-  PowerShell 5.1", "check my .ps1 for portability", "lint my shell scripts",
-  or before shipping a script to the scheduled-task / CI path. Encoding and
-  filename quirks belong to path-quirk-audit; this is syntax only.
-  Deterministic, zero dependencies, no model calls.
+description: >-
+  Read-only syntax scanner for cross-shell traps, reporting file:line + why +
+  the PS-5.1-safe fix: && and || (PS 5.1 parser error), ternary / ?. / ??
+  (PS7-only), Read-Host/pause/Out-GridView (block non-interactive runs),
+  Set-Content/Add-Content/Out-File without -Encoding, bash-isms in .ps1 and
+  PowerShell-isms in .sh. Use when: "will this run on PowerShell 5.1", "lint
+  my shell scripts", "shell-portability", before scheduling a script. Syntax
+  only — encoding/filename quirks are path-quirk-audit. Zero deps.
 ---
 
 # shell-portability — cross-shell syntax trap scanner

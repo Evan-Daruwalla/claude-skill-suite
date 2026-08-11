@@ -1,14 +1,13 @@
 ---
 name: token-squeeze
-description: >
-  Deterministic, no-LLM compressor that rewrites verbose English into fewer tokens for text
-  that will be REUSED — saved prompts, system prompts, skill bodies, docs pasted repeatedly.
-  Use when the user asks to "compress this file/prompt/doc for reuse", "shrink this system
-  prompt", "run token-squeeze", or wants to cut the token cost of a reusable text asset. Runs a
-  bundled Node CLI (no API, no model call). NOT for compressing live chat turns — those tokens
-  are already spent on arrival; this only pays when the compressed text replaces the original in
-  future contexts. Meaning-leaning, not lossless: it substitutes verbose phrases for equivalents
-  and protects code, URLs, paths, quotes, numbers, and negations.
+description: >-
+  Deterministic no-LLM compressor for text that will be REUSED — saved
+  prompts, system prompts, skill bodies, repeatedly-pasted docs.
+  Meaning-leaning, protects code/URLs/paths/quotes/numbers/negations. NOT for
+  live chat turns: those tokens are already spent; this pays only when the
+  compressed text replaces the original in future contexts. Use when:
+  "compress this prompt/doc for reuse", "shrink this system prompt",
+  "token-squeeze". Bundled Node CLI, no API key.
 ---
 
 This skill wraps a deterministic CLI. It does NOT ask you to compress text by hand — invoke the tool so results are reproducible and guard-checked.
