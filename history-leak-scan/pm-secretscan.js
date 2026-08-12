@@ -91,8 +91,11 @@ function detect(line, file) {
     const m = re.exec(line);
     if (m && !isPlaceholder(m[0])) return rule;
   }
-  // test + doc files: strong provider rules only, skip the noisy heuristics
-  if (isHeuristicExempt(file || "")) return null;
+  // test + doc files, and lockfiles/minified bundles: strong provider rules only
+  // (those already ran above), skip the noisy entropy + weak-password heuristics.
+  // SKIP_FILES joins this list rather than skipping the file wholesale, so a real
+  // provider key committed inside package-lock.json is still caught.
+  if (isHeuristicExempt(file || "") || SKIP_FILES.test(file || "")) return null;
   const m = ASSIGN.exec(line);
   if (m) {
     const val = m[2];
@@ -135,7 +138,11 @@ function scanRepo(repo, mode) {
         }
       }
       else if (line.startsWith("+") && !line.startsWith("+++")) {
-        if (SKIP_FILES.test(file)) return;
+        // NOT skipped wholesale on SKIP_FILES: that dropped lockfiles and minified
+        // bundles before ANY rule ran, so an npm `_authToken` or an AWS key
+        // embedded in package-lock.json was invisible to every gate (audit
+        // 2026-08-12). detect() now applies the noisy heuristics selectively while
+        // keeping the per-provider rules live on these files.
         const rule = detect(line.slice(1), file);
         if (rule) findings.push({ commit, file, rule, snippet: redact(line.slice(1).trim()) });
       }
