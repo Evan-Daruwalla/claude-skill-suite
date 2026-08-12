@@ -57,7 +57,11 @@ function targetRepo(cmd, cwd) {
 
 function main() {
   let j;
-  try { j = JSON.parse(fs.readFileSync(0, "utf8")); } catch { return allow(); }
+  // A malformed payload means we cannot tell whether this is a commit at all,
+  // so we must allow — but LOUDLY: this was the one silent fail-open left in
+  // the gate, and a silent skip is indistinguishable from a clean scan.
+  try { j = JSON.parse(fs.readFileSync(0, "utf8")); }
+  catch { return allowWithWarning("commit-gate WARNING: unparseable hook input — secret gate SKIPPED; if this was a commit it is UNSCANNED."); }
   const cmd = j && j.tool_input && j.tool_input.command;
   if (typeof cmd !== "string") return allow();
   // only a real `git commit`. The --dry-run test is scoped to the git-commit
@@ -133,6 +137,10 @@ function runCanary() {
     // an unscannable target must be LOUD, never a silent allow
     check(decide(path.join(os.tmpdir(), "cg-not-a-repo-xyz"), "git commit -m x") === "warn",
       "non-repo cwd -> noisy fail-open, not silent allow");
+    // malformed input used to allow SILENTLY — indistinguishable from a clean scan
+    const bad = spawnSync(process.execPath, [__filename], { input: "not json", encoding: "utf8" });
+    check((bad.stdout || "").includes("systemMessage") && bad.status === 0,
+      "malformed stdin -> loud skip, never a silent allow");
 
     const ok = fail === 0;
     console.log(`CANARY ${ok ? "PASS" : "FAIL"} ${pass}/${pass + fail}`);

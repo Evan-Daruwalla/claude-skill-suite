@@ -2,7 +2,7 @@
 name: history-leak-scan
 description: >-
   Deterministic secret scanner for git repos — full history (--history) or
-  staged diff (--staged): 17 provider-key rules, private-key blocks, JWTs,
+  staged diff (--staged): 15 provider-key rules, private-key blocks, JWTs,
   sensitive filenames (.env, .pem, id_rsa, *_keys.env), high-entropy +
   weak-password heuristics. Backs commit-gate in staged mode. Use when: "scan
   for secrets", "leak scan", "did I commit a secret", after any repo goes

@@ -57,6 +57,20 @@ for (const f of files) {
   else { failed.push(label); console.log(`  FAIL  ${label}  [exit ${r.status}]  ${last}`); }
 }
 
+// name what was NOT tested: "N/N passed" otherwise reads as whole-tree health
+const skipped = [];
+(function scan(dir) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      if (["node_modules", ".git", "__pycache__"].includes(e.name)) continue;
+      scan(p);
+    } else if (/[.](js|py)$/.test(e.name) && e.name !== path.basename(__filename) && !files.includes(p)) {
+      skipped.push(path.relative(root, p).split(String.fromCharCode(92)).join("/"));
+    }
+  }
+})(root);
 console.log(`\n=== ${pass}/${files.length} canaries passed ===`);
+if (skipped.length) console.log(`(${skipped.length} script(s) ship no --canary and were NOT tested: ${skipped.slice(0, 6).join(", ")}${skipped.length > 6 ? ", +" + (skipped.length - 6) + " more" : ""})`);
 if (failed.length) { console.log(`failed: ${failed.join(", ")}`); process.exit(1); }
 process.exit(0);
