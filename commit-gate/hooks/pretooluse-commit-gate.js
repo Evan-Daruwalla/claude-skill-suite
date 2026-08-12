@@ -44,15 +44,37 @@ function unquote(s) {
 // The command may target a repo OTHER than the session cwd — `git -C <dir>
 // commit`, or `cd <dir> && git commit`. Scanning j.cwd in that case scans the
 // wrong tree, and a clean result on the wrong tree reads as "allow".
+//
+// Resolution is CLAUSE-SCOPED. A multi-clause line can name two different repos
+// (`git -C <a> add -A && git -C <b> commit`); reading the first -C anywhere on
+// the line scanned <a> and SILENTLY ALLOWED a secret staged in <b>. Only the
+// clause that actually commits decides, and inside it git's own -C beats an
+// earlier cd — which is what git itself does.
 function targetRepo(cmd, cwd) {
-  const c = /(?:^|&&|;|\|\|)\s*cd\s+("[^"]+"|'[^']+'|\S+)\s*(?:&&|;)/.exec(cmd);
-  if (c) return { dir: path.resolve(cwd, unquote(c[1])) };
-  const m = /\bgit\b\s+(?:[^&|;]*?\s)?-C\s+("[^"]+"|'[^']+'|\S+)/.exec(cmd);
-  if (m) return { dir: path.resolve(cwd, unquote(m[1])) };
-  // a -C or cd is present but did not parse: we do not know which tree to scan,
-  // and guessing cwd is exactly the bug. Skip loudly rather than scan blind.
-  if (/\s-C\s/.test(cmd) || /(?:^|&&|;|\|\|)\s*cd\s/.test(cmd)) return { unknown: true };
-  return { dir: cwd };
+  const clauses = cmd.split(/&&|\|\||;/);
+  const i = clauses.findIndex((c) => /\bgit\b[\s\S]*\bcommit\b/.test(c));
+  if (i < 0) return { dir: cwd };
+  // -C is a top-level git option, so it can only sit between `git` and the
+  // subcommand. Tokenising and stopping at the `commit` token keeps
+  // `git commit -C <commit>` (reuse-message) from being read as a directory,
+  // and keeps a path that merely contains "commit" from ending the span early.
+  const toks = clauses[i].match(/"[^"]*"|'[^']*'|\S+/g) || [];
+  const ci = toks.indexOf("commit");
+  const span = ci < 0 ? toks : toks.slice(0, ci);
+  const ck = span.lastIndexOf("-C");
+  if (ck >= 0 && ck + 1 < span.length) return { dir: path.resolve(cwd, unquote(span[ck + 1])) };
+  // a -C is present but did not parse (`-C$DIR`, or -C with nothing after it):
+  // we do not know which tree to scan, and guessing cwd is exactly the bug.
+  if (span.some((t) => /^-C/.test(t))) return { unknown: true };
+  // no -C on the commit itself — the LAST cd before it set the working directory
+  let dir = null, cdUnparsed = false;
+  for (let k = 0; k < i; k++) {
+    const c = /^\s*cd\s+("[^"]+"|'[^']+'|\S+)\s*$/.exec(clauses[k]);
+    if (c) { dir = path.resolve(cwd, unquote(c[1])); cdUnparsed = false; }
+    else if (/^\s*cd(\s|$)/.test(clauses[k])) { dir = null; cdUnparsed = true; }
+  }
+  if (cdUnparsed) return { unknown: true };
+  return { dir: dir === null ? cwd : dir };
 }
 
 function main() {
@@ -79,6 +101,16 @@ function main() {
     );
   }
   const cwd = t.dir;
+  // node exits 1 on MODULE_NOT_FOUND as well as on findings, so a missing
+  // scanner would land in the status===1 branch below and DENY every commit with
+  // a false "a secret was detected" — whose natural remedy is --no-verify, i.e.
+  // no gate at all. Check for the file first and skip loudly instead.
+  if (!fs.existsSync(SCANNER)) {
+    return allowWithWarning(
+      "commit-gate WARNING: scanner not found at " + SCANNER +
+      " — secret gate SKIPPED; this commit is UNSCANNED."
+    );
+  }
   try {
     execFileSync("node", [SCANNER, "--staged", cwd], { encoding: "utf8" });
     return allow(); // exit 0 → no findings
@@ -107,6 +139,7 @@ function runCanary() {
   const os = require("os");
   const { execFileSync, spawnSync } = require("child_process");
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cg-canary-"));
+  let clean = null;
   let pass = 0, fail = 0;
   const check = (cond, desc) => { if (cond) pass++; else { fail++; console.log("  FAIL: " + desc); } };
   const decide = (cwd, command) => {
@@ -142,11 +175,28 @@ function runCanary() {
     check((bad.stdout || "").includes("systemMessage") && bad.status === 0,
       "malformed stdin -> loud skip, never a silent allow");
 
+    // A multi-clause line can name TWO repos. Resolving from the first -C on the
+    // line scanned the wrong one and allowed the commit with empty stdout — a
+    // silent allow, the worst outcome a gate has. Both shapes below were silent
+    // allows until 2026-08-12; testing each shape in isolation never caught it.
+    clean = fs.mkdtempSync(path.join(os.tmpdir(), "cg-clean-"));
+    execFileSync("git", ["init", "-q", clean], { stdio: "ignore" });
+    check(decide(os.tmpdir(), `git -C ${clean} add -A && git -C ${dir} commit -m x`) === "deny",
+      "add in a clean repo && commit in a dirty one -> the COMMIT clause decides");
+    check(decide(os.tmpdir(), `cd ${clean} && git -C ${dir} commit -m x`) === "deny",
+      "cd <clean> && git -C <dirty> commit -> -C beats an earlier cd");
+    // and the reuse-message flag is not a directory: misreading it as one
+    // resolves <dir>/HEAD, which does not exist, so the gate would degrade to a
+    // "warn" skip instead of scanning the cwd repo and denying.
+    check(decide(dir, "git commit -C HEAD -m x") === "deny",
+      "git commit -C <commit> is reuse-message, not a repo path");
+
     const ok = fail === 0;
     console.log(`CANARY ${ok ? "PASS" : "FAIL"} ${pass}/${pass + fail}`);
     return ok;
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+    if (clean) fs.rmSync(clean, { recursive: true, force: true });
   }
 }
 

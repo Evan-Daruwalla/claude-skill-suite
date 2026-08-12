@@ -261,6 +261,24 @@ function dirArgMissing(argv) {
   return v === null || v.startsWith("-");
 }
 
+// Flags that consume the token after them, so that token is a value, not a path.
+const VALUE_FLAGS = ["--dir"];
+
+// A bare positional was silently ignored and the audit then ran against cwd —
+// printing "Clean." about a directory nobody named, which is a false all-clear
+// and the worst output an audit tool has. Sibling scanners in this suite
+// (pm-secretscan, seed-control) DO take a positional path, so the wrong
+// invocation is the natural one to reach for. Refuse rather than guess.
+function strayArgs(argv) {
+  const stray = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith("-")) { if (VALUE_FLAGS.includes(a)) i++; continue; }
+    stray.push(a);
+  }
+  return stray;
+}
+
 function main() {
   const argv = process.argv.slice(2);
   if (argv.includes("--help") || argv.includes("-h")) { console.log(HELP); process.exit(0); }
@@ -268,6 +286,11 @@ function main() {
 
   // --dir, if given, must be followed by a real path (not another flag, not EOL).
   if (dirArgMissing(argv)) { console.error("error: --dir requires a path"); process.exit(2); }
+  const stray = strayArgs(argv);
+  if (stray.length) {
+    console.error(`error: unexpected argument '${stray[0]}' — this tool takes its path as --dir <path>, not a positional`);
+    process.exit(2);
+  }
   const dir = getOpt(argv, "--dir");
   const root = dir ? path.resolve(dir) : process.cwd();
   process.exit(cmdAudit(root, { fixPrint: argv.includes("--fix-print") }));

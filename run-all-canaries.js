@@ -6,9 +6,13 @@
  * silently: bisect-driver sat at CANARY FAIL 8/11 in both the live and the
  * published copy until an audit ran it by hand. This is the missing runner.
  *
- *   node run-all-canaries.js [skills-root]      (default: ~/.claude/skills)
+ *   node run-all-canaries.js [skills-root] [--expect <n>]   (default root: ~/.claude/skills)
  *
- * Exit 0 only if every canary passes; 1 otherwise. Deterministic, no model calls.
+ * --expect pins how many canaries the tree should hold, so a tree that lost half
+ * its skills fails instead of reporting a confident "N/N passed".
+ *
+ * Exit 0 only if every canary passes AND the count matches --expect when given;
+ * 1 otherwise. Deterministic, no model calls.
  */
 "use strict";
 const fs = require("fs");
@@ -16,7 +20,23 @@ const path = require("path");
 const os = require("os");
 const { spawnSync } = require("child_process");
 
-const root = process.argv[2] || path.join(os.homedir(), ".claude", "skills");
+// --expect <n> pins the DENOMINATOR. Without it the runner discovers its own
+// count, so a tree missing half its skills still reports "N/N passed", exit 0 —
+// a green integrity report byte-shaped like a complete one. The three trees hold
+// different counts, so the pin belongs with each tree, not in this file.
+const argv = process.argv.slice(2);
+let expect = null;
+const ei = argv.indexOf("--expect");
+if (ei >= 0) {
+  expect = Number(argv[ei + 1]);
+  if (!Number.isInteger(expect) || expect < 0) {
+    console.error("--expect requires a non-negative integer");
+    process.exit(2);
+  }
+  argv.splice(ei, 2);
+}
+
+const root = argv[0] || path.join(os.homedir(), ".claude", "skills");
 if (!fs.existsSync(root)) { console.error(`no such skills root: ${root}`); process.exit(2); }
 
 // a canary is any .js/.py in the tree whose own source offers --canary
@@ -72,5 +92,12 @@ const skipped = [];
 })(root);
 console.log(`\n=== ${pass}/${files.length} canaries passed ===`);
 if (skipped.length) console.log(`(${skipped.length} script(s) ship no --canary and were NOT tested: ${skipped.slice(0, 6).join(", ")}${skipped.length > 6 ? ", +" + (skipped.length - 6) + " more" : ""})`);
-if (failed.length) { console.log(`failed: ${failed.join(", ")}`); process.exit(1); }
-process.exit(0);
+let bad = failed.length > 0;
+if (failed.length) console.log(`failed: ${failed.join(", ")}`);
+// a discovered denominator cannot detect its own shortfall — the pin can
+if (expect !== null && files.length !== expect) {
+  console.log(`COUNT MISMATCH: expected ${expect} canaries under ${root}, discovered ${files.length}. ` +
+    `"${pass}/${files.length} passed" is therefore not whole-tree health.`);
+  bad = true;
+}
+process.exit(bad ? 1 : 0);
