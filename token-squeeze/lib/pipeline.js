@@ -14,6 +14,15 @@ const MASK_PATTERNS = [
   /"[^"]*"/g,                 // double-quoted strings
   /\b\w+(?:\.\w+)+\b/g,       // dotted identifiers: auth.js, example.com, 3.5, v2.0
 ];
+// Placeholders were previously a bare id wrapped in two INVISIBLE
+// Private-Use-Area characters. Undetectable in any diff or editor, they
+// nonetheless carried the round-trip: they were the only thing stopping
+// placeholder 1 from matching inside placeholder 10. Replaced with a visible
+// ASCII token, and unmask now replaces the FULL delimited token globally
+// instead of a first-occurrence substring, so the collision cannot reopen:
+// "__TSQ_1__" is not a substring of "__TSQ_10__".
+const ph = (id) => "__TSQ_" + id + "__";
+
 function mask(text) {
   const store = [];
   let out = text;
@@ -21,7 +30,7 @@ function mask(text) {
     out = out.replace(re, (m) => {
       const id = store.length;
       store.push(m);
-      return `${id}`;
+      return ph(id);
     });
   }
   return { out, store };
@@ -30,7 +39,7 @@ function unmask(text, store) {
   // restore in reverse so nested ids resolve correctly
   let out = text;
   for (let i = store.length - 1; i >= 0; i--) {
-    out = out.replace(`${i}`, store[i]);
+    out = out.split(ph(i)).join(store[i]);
   }
   return out;
 }

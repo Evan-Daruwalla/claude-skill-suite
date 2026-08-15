@@ -281,9 +281,20 @@ Bisect checks out historic commits DURING the run; commit or stash first.
 
 Exit codes: 0 culprit found · 1 no culprit / bisect error · 2 usage / preflight.`;
 
+// A value-flag given without a value used to return null and fall back to a
+// default — for --dir that meant bisecting the SESSION CWD and printing a
+// confident CULPRIT from a repo nobody named, at exit 0. cve-audit hardened
+// this exact shape in this same suite ("Refuse rather than guess"); the fix
+// never propagated here. Refuse instead of guessing.
 function getOpt(argv, flag) {
   const i = argv.indexOf(flag);
-  return i >= 0 && i + 1 < argv.length ? argv[i + 1] : null;
+  if (i < 0) return null;
+  const v = i + 1 < argv.length ? argv[i + 1] : null;
+  if (v === null || v.startsWith("--")) {
+    console.error(`error: ${flag} requires a value (got ${v === null ? "nothing" : v})`);
+    process.exit(2);
+  }
+  return v;
 }
 
 function main() {

@@ -38,8 +38,15 @@ const RULES = [
 // files that should never be committed AT ALL, regardless of content.
 // Name-based (gitleaks-style path rule); example/sample/template names and
 // test-fixture paths are exempt (self-signed test certs are legitimate).
-const SENSITIVE_FILE = /(^|\/)(\.env(\.[^\/]+)?|[^\/]+\.(pem|p12|pfx)|id_(rsa|ed25519|ecdsa)(\.[^\/]+)?|[^\/]*_keys?\.env)$/i;
+// Kept deliberately in sync with local-secrets-manage's NAME_RULES: the two
+// skills document themselves as two halves of one job ("run both"), so a name
+// one flags and the other ignores is a hole with a reassuring shape. Added
+// 2026-08-15: key/jks/keystore/ppk, id_dsa, credentials*.json, secrets.*
+const SENSITIVE_FILE = /(^|\/)(\.env(\.[^\/]+)?|[^\/]+\.(pem|p12|pfx|key|jks|keystore|ppk)|id_(rsa|dsa|ed25519|ecdsa)(\.[^\/]+)?|[^\/]*_keys?\.env|credentials[^\/]*\.json|secrets\.[^\/]+)$/i;
 const FILE_EXEMPT = /example|sample|template|dummy|fixture/i;
+// git emits forward slashes in diff/name-only output on every platform, so this
+// is correct without pulling in `path` (and without path.win32 surprises).
+const basename = (f) => f.slice(f.lastIndexOf("/") + 1);
 // generic "secretish_name = <value>" assignment (keyword may be embedded,
 // e.g. alpaca_secret_key — no leading word boundary required)
 const ASSIGN = /\b([A-Za-z0-9_]*(?:api[_-]?key|secret|token|password|passwd|pwd|access[_-]?key|client[_-]?secret)[A-Za-z0-9_]*)\s*[:=]\s*['"]?([A-Za-z0-9/+_\-]{16,})['"]?(?:\s|$|['";,)])/i;
@@ -112,10 +119,24 @@ function detect(line, file) {
 // ---- git streaming ---------------------------------------------------------
 function scanRepo(repo, mode) {
   return new Promise((resolve) => {
+    // staged      → what `git commit` will record.
+    // staged-all  → what `git commit -a` will record. `-a` stages tracked
+    //               modifications AT COMMIT TIME, i.e. AFTER a PreToolUse gate
+    //               has run, so `--cached` is empty and a real key sailed
+    //               through. Diffing HEAD covers staged + unstaged-tracked.
+    // history     → every version ever committed. `-m` is required or merge
+    //               commits contribute NO diff, and a secret introduced while
+    //               resolving a conflict is invisible to the whole scan.
+    // --text forces a textual diff for paths git considers binary — including
+    // any path marked `-diff` in .gitattributes. Without it, ONE line of
+    // .gitattributes (`*.env -diff`) suppressed the diff body for real .env
+    // files and every content rule silently no-opped on them.
     const args =
       mode === "staged"
-        ? ["-C", repo, "diff", "--cached", "--no-color", "-U0"]
-        : ["-C", repo, "log", "-p", "--all", "--no-color", "-U0"];
+        ? ["-C", repo, "diff", "--cached", "--no-color", "-U0", "--text"]
+        : mode === "staged-all"
+        ? ["-C", repo, "diff", "HEAD", "--no-color", "-U0", "--text"]
+        : ["-C", repo, "log", "-p", "--all", "-m", "--no-color", "-U0", "--text"];
     const git = spawn("git", args);
     const findings = [];
     let commit = "(working)", file = "?", buf = "";
@@ -133,7 +154,12 @@ function scanRepo(repo, mode) {
         // (what Notepad writes) would bypass the name rule entirely. The name IS
         // the finding here regardless of extension; FILE_EXEMPT still covers
         // .env.example and friends.
-        if (file !== "/dev/null" && SENSITIVE_FILE.test(file) && !FILE_EXEMPT.test(file)) {
+        // FILE_EXEMPT is matched against the BASENAME, not the whole path.
+        // Against the path, any ancestor directory named templates/, samples/,
+        // examples/ or fixtures/ exempted everything beneath it — and
+        // `templates/` is a stock Flask/Django/Jinja directory, so a real
+        // `templates/.env` was silently waved through.
+        if (file !== "/dev/null" && SENSITIVE_FILE.test(file) && !FILE_EXEMPT.test(basename(file))) {
           findings.push({ commit, file, rule: "sensitive-filename", snippet: "(file of this name should not be committed)" });
         }
       }
@@ -162,6 +188,36 @@ function scanRepo(repo, mode) {
       resolve({ repo, findings, error: code !== 0, stderr: stderr.trim() });
     });
     git.on("error", (e) => resolve({ repo, findings: [], error: true, stderr: String(e.message || e) }));
+  });
+}
+
+// The filename rule above rides on the `+++ b/<path>` header — and git emits NO
+// such header for a binary blob or a path marked `-diff` in .gitattributes. So
+// the two extensions that are ALWAYS binary, *.p12 and *.pfx, were guards that
+// could never fire, and one `*.env -diff` line disabled the rule for real .env
+// files. Enumerate the touched paths separately, where no diff body is involved.
+function scanNames(repo, mode) {
+  return new Promise((resolve) => {
+    const args =
+      mode === "staged"     ? ["-C", repo, "diff", "--cached", "--name-only"]
+      : mode === "staged-all" ? ["-C", repo, "diff", "HEAD", "--name-only"]
+      : ["-C", repo, "log", "--all", "-m", "--name-only", "--pretty=format:"];
+    const git = spawn("git", args);
+    let out = "";
+    git.stdout.on("data", (d) => (out += d.toString("utf8")));
+    git.on("error", () => resolve([]));
+    git.on("close", () => {
+      const seen = new Set(), findings = [];
+      for (let f of out.split("\n")) {
+        f = f.trim();
+        if (!f || seen.has(f)) continue;
+        seen.add(f);
+        if (SENSITIVE_FILE.test(f) && !FILE_EXEMPT.test(basename(f))) {
+          findings.push({ commit: "(name)", file: f, rule: "sensitive-filename", snippet: "(file of this name should not be committed)" });
+        }
+      }
+      resolve(findings);
+    });
   });
 }
 
@@ -214,13 +270,17 @@ async function runCanary() {
 async function main() {
   const argv = process.argv.slice(2);
   if (argv.includes("--canary")) { process.exit((await runCanary()) ? 0 : 1); }
-  const KNOWN = new Set(["--staged", "--history", "--canary"]);
+  const KNOWN = new Set(["--staged", "--staged-all", "--history", "--canary"]);
   // an unrecognised flag used to be filtered out silently, so a typo like
   // `--stage` fell through to history mode and the staged diff — the thing the
   // gate exists to check — was never scanned.
   const bad = argv.filter((a) => a.startsWith("--") && !KNOWN.has(a));
   if (bad.length) { console.error(`unknown flag(s): ${bad.join(" ")}\nusage: pm-secretscan.js --history|--staged|--canary <repo>...`); process.exit(2); }
-  const mode = argv.includes("--staged") ? "staged" : "history";
+  // --staged-all is checked FIRST: `--staged --staged-all` must widen the scan,
+  // not narrow it. Narrowing on flag order would reintroduce the -a bypass.
+  const mode = argv.includes("--staged-all") ? "staged-all"
+    : argv.includes("--staged") ? "staged"
+    : "history";
   const repos = argv.filter((a) => !a.startsWith("--"));
   if (!repos.length) { console.error("usage: pm-secretscan.js --history|--staged|--canary <repo>..."); process.exit(2); }
   let total = 0;
@@ -231,9 +291,13 @@ async function main() {
       if (stderr) console.error(`  ${stderr.split("\n")[0]}`);
       process.exit(2);
     }
+    // name-only pass: catches sensitive FILENAMES that produce no diff body
+    // (binary blobs, `-diff` paths). Merged before the dedupe so a file caught
+    // both ways is reported once.
+    const nameFindings = await scanNames(repo, mode);
     // dedupe identical (file,rule,snippet) across history versions
     const seen = new Set(), uniq = [];
-    for (const f of findings) { const k = f.file + f.rule + f.snippet; if (!seen.has(k)) { seen.add(k); uniq.push(f); } }
+    for (const f of findings.concat(nameFindings)) { const k = f.file + f.rule + f.snippet; if (!seen.has(k)) { seen.add(k); uniq.push(f); } }
     if (uniq.length) {
       total += uniq.length;
       console.log(`\n### ${repo} — ${uniq.length} finding(s)`);

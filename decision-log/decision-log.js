@@ -70,7 +70,12 @@ function cmdAdd(decision, why, file) {
     return 2;
   }
   const fp = resolveFile(file);
-  const line = formatLine(new Date(), decision.trim(), why ? why.trim() : null);
+  // Newlines are collapsed: a multi-line decision (pasted from notes) wrote a
+  // continuation line that `list` silently dropped, so DECISIONS.md on disk and
+  // the listing disagreed — in an append-only record, which is the one place
+  // that must not happen.
+  const flat = (s) => s.trim().replace(/\s*\n\s*/g, " ");
+  const line = formatLine(new Date(), flat(decision), why ? flat(why) : null);
   try {
     if (!fs.existsSync(fp)) {
       fs.writeFileSync(fp, HEADER + "\n\n" + line + "\n", "utf8"); // create with header

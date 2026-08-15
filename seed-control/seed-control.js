@@ -52,8 +52,14 @@ function scanFile(file) {
   const findings = [];
 
   if (ext === ".py") {
-    const hasRandomSeed = lines.some((l) => PY_RANDOM_SEED.test(l));
-    const hasNpSeed = lines.some((l) => PY_NP_SEED.test(l) || PY_NP_RNG.test(l));
+    // A seed call mentioned only in a COMMENT ("random.seed( is called in our
+    // shared harness") used to satisfy the whole-file seed check, so a file with
+    // real unseeded draws reported clean — the exact false-negative this tool
+    // exists to prevent. Strip comment text before deciding a file is seeded.
+    // (shell-portability already masks quoted strings this way.)
+    const decommented = lines.map((l) => l.replace(/#.*$/, ""));
+    const hasRandomSeed = decommented.some((l) => PY_RANDOM_SEED.test(l));
+    const hasNpSeed = decommented.some((l) => PY_NP_SEED.test(l) || PY_NP_RNG.test(l));
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
       if (PY_SEED_OK.test(l)) continue;

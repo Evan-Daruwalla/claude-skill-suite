@@ -68,7 +68,12 @@ function nextRunFlag(isDisabled, nextRaw) {
   const s = (nextRaw || "").trim();
   if (s === "" || /^n\/a$/i.test(s)) return "next-run N/A (enabled)";
   const t = Date.parse(s); // runtime clock compare — live logic, never baseline content
-  if (!Number.isNaN(t) && t < Date.now()) return "next-run in past: " + s;
+  // An UNPARSEABLE value used to fall through to `return null` — i.e. "healthy".
+  // A clean "N/A" was flagged but a garbled one (encoding/locale corruption of
+  // the captured field) reported the task as fine. Silence about a value we
+  // could not read is the same failure as N/A, so say so.
+  if (Number.isNaN(t)) return "next-run unparseable: " + s;
+  if (t < Date.now()) return "next-run in past: " + s;
   return null;
 }
 

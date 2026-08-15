@@ -46,10 +46,17 @@ function normalize(str, norm) {
 
 function baselineDir(root, name) { return path.join(root, ".golden", name); }
 
+// A damaged baseline must NOT surface as a mismatch. An uncaught JSON.parse
+// threw a stack trace and exited 1 — which is this tool's documented MISMATCH
+// code — so a CI wrapper read "the output drifted" when the baseline was
+// merely unreadable, and `list` died entirely on one corrupt entry, hiding
+// every healthy baseline behind it. Return the "unusable baseline" signal
+// instead and let callers exit 2.
 function readMeta(root, name) {
   const mp = path.join(baselineDir(root, name), "meta.json");
   if (!fs.existsSync(mp)) return null;
-  return JSON.parse(fs.readFileSync(mp, "utf8"));
+  try { return JSON.parse(fs.readFileSync(mp, "utf8")); }
+  catch (e) { return { __unreadable: e.message }; }
 }
 
 // produce the CURRENT output for a baseline, with the given normalization applied.
@@ -123,11 +130,16 @@ function cmdCheck(root, name, opts) {
   if (!validName(name)) { console.error(`error: bad baseline name '${name}'`); return 2; }
   const meta = readMeta(root, name);
   if (!meta) { console.error(`error: no baseline '${name}' in .golden/ (freeze it first)`); return 2; }
+  if (meta.__unreadable) { console.error(`error: baseline '${name}' is unreadable (${meta.__unreadable}) — NOT a mismatch, re-freeze it`); return 2; }
   const norm = { normalizeEol: meta.normalizeEol, stripAnsi: meta.stripAnsi };
   let res;
   try { res = produce(root, meta.mode, meta.command, meta.file, norm); }
   catch (e) { console.error("error: " + e.message); return 2; }
-  const expected = fs.readFileSync(path.join(baselineDir(root, name), "output.txt"), "utf8");
+  // a present meta.json with a missing/unreadable output.txt is the same class:
+  // an incomplete baseline, not a drifted output
+  let expected;
+  try { expected = fs.readFileSync(path.join(baselineDir(root, name), "output.txt"), "utf8"); }
+  catch (e) { console.error(`error: baseline '${name}' is incomplete (${e.code || e.message}) — NOT a mismatch, re-freeze it`); return 2; }
   const outMatch = res.output === expected;
   const exitMatch = meta.mode !== "cmd" || res.exitCode === meta.exitCode;
 
@@ -152,12 +164,16 @@ function cmdList(root) {
   if (!fs.existsSync(gdir)) { console.log("(no baselines — .golden/ does not exist)"); return 0; }
   const names = fs.readdirSync(gdir).filter((n) => fs.existsSync(path.join(gdir, n, "meta.json"))).sort();
   if (!names.length) { console.log("(no baselines in .golden/)"); return 0; }
+  // one damaged baseline must not hide the healthy ones: report it in place
+  // and keep listing. Previously the throw killed the whole command.
+  let bad = 0;
   for (const n of names) {
     const m = readMeta(root, n);
+    if (m.__unreadable) { console.log(`${n}\t(UNREADABLE — ${m.__unreadable})`); bad++; continue; }
     const created = (m.createdAt || "").slice(0, 10);
     console.log(`${n}\t${m.mode}\t${created}\t${(m.sha256 || "").slice(0, 12)}`);
   }
-  return 0;
+  return bad ? 2 : 0;
 }
 
 // ---- canary: the self-test AND the done-check ------------------------------

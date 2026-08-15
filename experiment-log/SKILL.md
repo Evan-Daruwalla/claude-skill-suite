@@ -95,15 +95,27 @@ the exercise: cost is measured automatically, value is not.
 Two derivation rules the hook exists to get right, both of which produced
 confident wrong numbers first:
 
-- **`cache_read_input_tokens` is cumulative** — it re-reads the whole cached
-  prefix every turn, so summing it across turns inflates a 78K-token run to
-  517K. It is read from the final turn only, and reported as `context_peak`.
+- **`cache_read_input_tokens` is cumulative but NOT monotonic** — summing it
+  across turns inflates a 78K-token run to 517K, so it is never summed; but the
+  final turn is not the peak either (28/409 real transcripts), and a terminal
+  `<synthetic>` message with all-zero usage resets a last-turn reading to 0.
+  `context_peak` is the running MAX.
 - **One API message spans several transcript lines**, one per content block, all
-  sharing `message.id` and each carrying a copy of the same usage object.
-  Deduping by `message.id` is correct for usage and fatal for content — it keeps
-  the leading `thinking` block and discards every `tool_use` behind it, reading
-  0 tools on every multi-turn agent. Usage is deduped; `tool_use` blocks are
-  counted across all lines.
+  sharing `message.id`. Deduping by it is fatal for content — it keeps the
+  leading `thinking` block and discards every `tool_use` behind it, reading 0
+  tools on every multi-turn agent. `tool_use` blocks are counted across all lines.
+- **`output_tokens` is the one usage field that STREAMS across those lines.**
+  The first line carries a partial count and the last carries the total;
+  `input_tokens`, `cache_creation` and `cache_read` are genuinely identical
+  across all lines of a message. Measured over 409 transcripts: `output_tokens`
+  differs in 4,855 of 6,335 multi-line ids, the other three differ in zero, and
+  the max is on the last line 6,335/6,335 times. Taking the first line — the
+  original implementation — undercounted by **86.3%**. Usage is deduped per id,
+  except `output_tokens`, which is taken as that id's MAX.
+  **This was shipped green:** the canary's fixture gave every split line the
+  same usage object, so it passed 15/15 while encoding the identical false
+  assumption as the code. The fixture now streams 5 → 12 → 20 and asserts the
+  result is not the first-line sum, so it fails against the old logic.
 
 **Not reproduced on purpose:** the harness's own `subagent_tokens` aggregate. No
 combination of transcript fields matched it across five real runs (closest was
@@ -112,7 +124,7 @@ exact components are logged instead and any aggregate can be computed later.
 Don't "fix" this into a fitted number.
 
 The hook never blocks a turn: every failure path exits 0 silently. Verify with
-`node hooks/subagent-log.js --canary` — MUST print `CANARY PASS 15/15`.
+`node hooks/subagent-log.js --canary` — MUST print `CANARY PASS 17/17`.
 
 ## Windows notes
 

@@ -15,7 +15,7 @@
  * the same skills). Update these when a canary is added or removed; a stale pin
  * fails LOUDLY, which is the point:
  *     ~/.claude/skills            --expect 22   (the tree the runtime loads)
- *     D:\ClaudeCode\Skills\skills --expect 18   (private lab, incl. claim-check)
+ *     <your-lab-tree>            --expect <n>   (a private lab tree, if you keep one)
  *     claude-skill-suite          --expect 19   (public mirror)
  *
  * Exit 0 only if every canary passes AND the count matches --expect when given;
