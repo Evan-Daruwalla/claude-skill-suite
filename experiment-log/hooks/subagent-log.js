@@ -10,16 +10,29 @@
 // derived from the agent's own transcript; name/description/model come from the
 // sibling .meta.json.
 //
-// Two transcript facts this depends on, both verified empirically against five
-// real runs on 2026-08-14:
+// Three transcript facts this depends on. The first two were written from five
+// runs on 2026-08-14 and were PARTLY WRONG; corrected 2026-08-15 against 409
+// real transcripts, which is the sample size that exposed the error:
 //   1. ONE API message is split across SEVERAL transcript lines, one per content
-//      block, all sharing message.id, each carrying a COPY of the same usage.
-//      So usage must be counted once per message.id, while tool_use blocks must
-//      be counted across every line (deduping there undercounts to zero).
-//   2. cache_read_input_tokens is cumulative — each turn re-reads the whole
-//      cached prefix. Summing it across turns double-counts enormously
-//      (517k vs an actual 78k on one run), so it is never summed, only read
-//      from the final turn.
+//      block, all sharing message.id. tool_use blocks must be counted across
+//      every line (deduping there undercounts to zero).
+//   2. Three usage fields ARE identical on every line of a message —
+//      input_tokens, cache_creation_input_tokens, cache_read_input_tokens
+//      (differ in 0 of 6,335 multi-line ids). Those are deduped per id.
+//   3. output_tokens is NOT. It STREAMS: the first line holds a partial count,
+//      the last holds the total, and the max is on the last line in 100% of
+//      multi-line ids. The original "each line carries a copy of the same
+//      usage" claim was false for exactly this field, and taking the first
+//      line undercounted the aggregate by 86% (345x on one transcript). It is
+//      taken as the MAX per message.id.
+//      That wrong version shipped GREEN: the canary's fixture gave every split
+//      line identical usage, so 15/15 tested the assumption rather than the
+//      behaviour. The fixture now streams 5 -> 12 -> 20.
+//   4. cache_read_input_tokens is cumulative but NOT monotonic — each turn
+//      re-reads the cached prefix, so summing double-counts enormously (517k
+//      vs an actual 78k), but the final turn is not the peak either (28/409
+//      transcripts) and a terminal `<synthetic>` message with all-zero usage
+//      would reset it to 0. context_peak is the running MAX.
 //
 // Deliberately NOT reproduced: the harness's own `subagent_tokens` figure. No
 // combination of these fields matched it across all five runs (closest was
