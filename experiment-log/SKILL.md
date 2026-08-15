@@ -7,7 +7,8 @@ description: >-
   outputs (after), note. Append-only JSONL; never touches HANDOFF.md or the
   record (project-memory owns the narrative). Use when: "log this run",
   "record provenance", "experiment log", "make this run reproducible", "what
-  produced this output". Zero deps.
+  produced this output". Also ships a SubagentStop hook that logs every subagent
+  run (cost, tools, duration) to agent-runs.jsonl automatically. Zero deps.
 ---
 
 # experiment-log — reproducibility provenance for a run
@@ -66,6 +67,52 @@ Other uses:
   `log --cmd "python -m app.seed" --in db/seed.sql --out db/snapshot.sql`.
 - **Any ad-hoc script whose result you'll want to defend later** — log it once so
   the inputs, commit, and versions are on record instead of in your memory.
+
+## The subagent hook (automatic, no command)
+
+`hooks/subagent-log.js` is a `SubagentStop` hook: it appends one line to
+`~/.claude/agent-runs.jsonl` every time a subagent finishes, with no invocation
+from you. It answers a different question from the CLI above — not "what
+produced this output?" but **"what did this agent run cost, and did it catch
+anything real?"** — which is the measurement no published study provides for
+subagent review gates.
+
+Register it in `~/.claude/settings.json`:
+
+```json
+{ "hooks": { "SubagentStop": [ { "hooks": [
+  { "type": "command",
+    "command": "node \"<skills-dir>/experiment-log/hooks/subagent-log.js\"" }
+] } ] } }
+```
+
+Each line carries `ts`, `session_id`, `agent_id`, `agent_type`, `name`,
+`description`, `model`, `cwd`, `input_new`, `output_tokens`, `context_peak`,
+`tool_uses`, `turns`, `duration_ms`, `result_head`, and `finding`. **`finding`
+is always `null` — it is yours to fill in by hand.** That column is the point of
+the exercise: cost is measured automatically, value is not.
+
+Two derivation rules the hook exists to get right, both of which produced
+confident wrong numbers first:
+
+- **`cache_read_input_tokens` is cumulative** — it re-reads the whole cached
+  prefix every turn, so summing it across turns inflates a 78K-token run to
+  517K. It is read from the final turn only, and reported as `context_peak`.
+- **One API message spans several transcript lines**, one per content block, all
+  sharing `message.id` and each carrying a copy of the same usage object.
+  Deduping by `message.id` is correct for usage and fatal for content — it keeps
+  the leading `thinking` block and discards every `tool_use` behind it, reading
+  0 tools on every multi-turn agent. Usage is deduped; `tool_use` blocks are
+  counted across all lines.
+
+**Not reproduced on purpose:** the harness's own `subagent_tokens` aggregate. No
+combination of transcript fields matched it across five real runs (closest was
+14-105 tokens under, inconsistently) and its definition is undocumented, so the
+exact components are logged instead and any aggregate can be computed later.
+Don't "fix" this into a fitted number.
+
+The hook never blocks a turn: every failure path exits 0 silently. Verify with
+`node hooks/subagent-log.js --canary` — MUST print `CANARY PASS 15/15`.
 
 ## Windows notes
 
