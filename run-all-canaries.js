@@ -11,12 +11,15 @@
  * --expect pins how many canaries the tree should hold, so a tree that lost half
  * its skills fails instead of reporting a confident "N/N passed".
  *
- * Counts as measured 2026-08-12 (they legitimately differ — the trees do not hold
- * the same skills). Update these when a canary is added or removed; a stale pin
- * fails LOUDLY, which is the point:
- *     ~/.claude/skills            --expect 22   (the tree the runtime loads)
+ * Counts as re-measured 2026-08-18 (they legitimately differ — the trees do not
+ * hold the same skills). Update these when a canary is added or removed; a stale
+ * pin fails LOUDLY, which is the point — and it has now fired on its own author
+ * twice: the pin below sat at 19 while this tree held 20, so the documented
+ * command exited 1 on a FALSE alarm. Bumping the pin is part of adding a canary,
+ * not a follow-up:
+ *     ~/.claude/skills            --expect 24   (the tree the runtime loads)
  *     <your-lab-tree>            --expect <n>   (a private lab tree, if you keep one)
- *     claude-skill-suite          --expect 19   (public mirror)
+ *     claude-skill-suite          --expect 20   (public mirror)
  *
  * Exit 0 only if every canary passes AND the count matches --expect when given;
  * 1 otherwise. Deterministic, no model calls.
@@ -99,6 +102,11 @@ const skipped = [];
 })(root);
 console.log(`\n=== ${pass}/${files.length} canaries passed ===`);
 if (skipped.length) console.log(`(${skipped.length} script(s) ship no --canary and were NOT tested: ${skipped.slice(0, 6).join(", ")}${skipped.length > 6 ? ", +" + (skipped.length - 6) + " more" : ""})`);
+// Discovery is .js/.py only. If your suite also keeps SHELL canaries — a gate
+// self-test, an install check — they are outside this tally entirely, and an
+// unqualified "N/N passed" then reads as whole-tree health when the most
+// security-critical component was never exercised. Name yours here.
+console.log("(shell canaries, if your tree keeps any, are NOT run by this runner — run them by hand after touching a pre-commit hook or a PreToolUse gate)");
 let bad = failed.length > 0;
 if (failed.length) console.log(`failed: ${failed.join(", ")}`);
 // a discovered denominator cannot detect its own shortfall — the pin can
