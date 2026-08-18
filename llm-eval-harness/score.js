@@ -22,6 +22,27 @@ const TASKS = JSON.parse(fs.readFileSync(path.join(DIR, "tasks.json"), "utf8")).
 function firstLine(t) { return t.split(/\r?\n/)[0] || ""; }
 function nonEmptyLines(t) { return t.split(/\r?\n/).filter((l) => l.trim()).length; }
 
+// Sentence count, for prompts that say "in exactly N sentences" — a constraint
+// that is trivial to state, common in this project's prompts, and was previously
+// uncheckable. Strips fenced code and markdown bullets first (a bulleted list is
+// not prose sentences), and does not split on the dot in an abbreviation or a
+// decimal: "M1." ends a sentence, "e.g." and "0.5" do not.
+function sentenceCount(t) {
+  const prose = t
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/^\s*[-*+]\s.*$/gm, " ")
+    .replace(/\b([A-Z]|Mr|Mrs|Dr|St|Jr|Sr|vs|etc|e\.g|i\.e)\.\s*/g, "$1 ")
+    .replace(/(\d)\.(\d)/g, "$1$2");
+  // The terminator may be followed by a closing quote or bracket before the
+  // space: `hook the gates."` ends a sentence. Without this, the counter
+  // undercounts any sentence that closes on a quotation — which is most
+  // sentences that quote a rule — and the check silently becomes "did you avoid
+  // ending on a quote" rather than "how many sentences". Caught by verifying the
+  // failures instead of trusting them: 4 of 6 first-run FAILs were false.
+  const hits = prose.match(/[.!?]["'”’)\]]*(\s|$)/g);
+  return hits ? hits.length : 0;
+}
+
 function runCheck(text, c) {
   switch (c.type) {
     case "matches": return new RegExp(c.re, c.flags || "").test(text);
@@ -30,6 +51,7 @@ function runCheck(text, c) {
     case "maxFirstLineLen": return firstLine(text).length <= c.n;
     case "minLines": return nonEmptyLines(text) >= c.n;
     case "maxWords": return text.split(/\s+/).filter(Boolean).length <= c.n;
+    case "sentences": return sentenceCount(text) === c.n;
     default: throw new Error("unknown check type: " + c.type);
   }
 }
@@ -80,6 +102,16 @@ function main() {
 
   const task = TASKS.find((t) => t.id === taskId);
   if (!task) { console.error("no such task: " + taskId + " (have: " + TASKS.map((t) => t.id).join(", ") + ")"); process.exit(2); }
+  // A retired task stays in tasks.json — the roadmap convention is dated
+  // strikethrough, never deletion — but refuses to produce a number. Scoring one
+  // silently would keep feeding a discredited metric into the ratchet, which is
+  // worse than the original defect because the row looks exactly like a good one.
+  if (task.retired) {
+    console.error(`\n[${taskId}] RETIRED ${task.retired.date} (see: ${task.retired.record}) — refusing to score.\n` +
+      `  ${task.retired.reason}\n` +
+      (task.retired.replacedBy ? `  Use instead: ${task.retired.replacedBy}\n` : ""));
+    process.exit(3);
+  }
   const text = fs.readFileSync(candFile, "utf8");
 
   let score, detail = [];
@@ -90,7 +122,13 @@ function main() {
     detail = results;
     console.log(`\n[${taskId}] model=${model}  checks ${passed}/${results.length}  score=${score.toFixed(3)}`);
     for (const r of results) console.log(`  ${r.pass ? "PASS" : "FAIL"}  ${r.desc}`);
-    if (score === 1) console.log("  note: a perfect checks score = baseline discipline met, NOT model parity — checks are near-ceiling by design; the golden tasks and medians discriminate.");
+    // The old note here said the GOLDEN tasks discriminate. They are retired
+    // (see SKILL.md): golden similarity tracked output length, not quality. What
+    // actually discriminates is a check with a hard numeric BOUND — a word cap,
+    // an exact sentence count — because a model can fail it while writing
+    // perfectly good prose. Presence checks ("does it name HANDOFF.md") sit at
+    // 10/10 for every model tested and separate nothing.
+    if (score === 1) console.log("  note: a perfect checks score = baseline discipline met, NOT model parity. Presence-style checks are near-ceiling; the BOUND checks (maxWords, sentences) are the ones that discriminate — read medians of >=3, not single runs.");
   } else if (task.score.method === "golden") {
     const gp = path.join(DIR, "goldens", `${taskId}.${task.score.refModel}.md`);
     if (!fs.existsSync(gp)) {
