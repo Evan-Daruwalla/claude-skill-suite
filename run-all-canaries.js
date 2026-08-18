@@ -6,20 +6,22 @@
  * silently: bisect-driver sat at CANARY FAIL 8/11 in both the live and the
  * published copy until an audit ran it by hand. This is the missing runner.
  *
- *   node run-all-canaries.js [skills-root] [--expect <n>]   (default root: ~/.claude/skills)
+ *   node run-all-canaries.js [skills-root]              (default root: ~/.claude/skills)
+ *   node run-all-canaries.js [skills-root] --write-pin  record this tree's count
+ *   node run-all-canaries.js [skills-root] --expect <n> one-off override
  *
- * --expect pins how many canaries the tree should hold, so a tree that lost half
- * its skills fails instead of reporting a confident "N/N passed".
+ * A pin is how many canaries the tree SHOULD hold, so a tree that lost half its
+ * skills fails instead of reporting a confident "N/N passed".
  *
- * Counts as re-measured 2026-08-18 (they legitimately differ — the trees do not
- * hold the same skills). Update these when a canary is added or removed; a stale
- * pin fails LOUDLY, which is the point — and it has now fired on its own author
- * twice: the pin below sat at 19 while this tree held 20, so the documented
- * command exited 1 on a FALSE alarm. Bumping the pin is part of adding a canary,
- * not a follow-up:
- *     ~/.claude/skills            --expect 24   (the tree the runtime loads)
- *     <your-lab-tree>            --expect <n>   (a private lab tree, if you keep one)
- *     claude-skill-suite          --expect 20   (public mirror)
+ * PINS LIVE IN canary-pins.json, NOT IN THIS COMMENT. They used to live here, as
+ * prose, which meant nothing read them: enforcing a count required remembering to
+ * type --expect, and updating one required remembering this block existed. Both
+ * were forgotten three times in four days, across three different trees — twice
+ * by the same person who had just finished fixing the previous instance. The pins
+ * are now data, applied automatically when --expect is omitted, so the BARE
+ * command is the enforced one. Adding a canary is deliberate; `--write-pin` is
+ * how you say so, and it refuses to record a pin while any canary is failing. An
+ * unpinned tree prints NO PIN rather than passing quietly.
  *
  * Exit 0 only if every canary passes AND the count matches --expect when given;
  * 1 otherwise. Deterministic, no model calls.
@@ -34,6 +36,34 @@ const { spawnSync } = require("child_process");
 // count, so a tree missing half its skills still reports "N/N passed", exit 0 —
 // a green integrity report byte-shaped like a complete one. The three trees hold
 // different counts, so the pin belongs with each tree, not in this file.
+//
+// The pins used to live ONLY in the header comment above, which meant nothing
+// read them: enforcing a count required remembering to type --expect, and
+// updating one required remembering that the comment existed. It drifted three
+// times in four days across three trees. Now they live in canary-pins.json beside this script
+// and apply AUTOMATICALLY when --expect is omitted, so the bare command is the
+// enforced one and there is no separate step to forget. Adding a canary is a
+// deliberate act; `--write-pin` is how you say so.
+const PINS_FILE = path.join(__dirname, "canary-pins.json");
+
+function loadPins() {
+  try { return JSON.parse(fs.readFileSync(PINS_FILE, "utf8")); } catch { return {}; }
+}
+// Key RELATIVE to the pins file wherever possible: "." for the tree this file
+// sits in, "../skills" for a sibling. An absolute key would bake one machine's
+// directory layout into the file — which leaks a local path when the repo is
+// public, and loses the pin entirely when the repo is cloned anywhere else.
+// Falls back to the absolute path only when no relative route exists (a
+// different drive), and lowercases so D:\… and /d/… cannot become two entries
+// that disagree.
+function pinKey(p) {
+  const abs = path.resolve(p).replace(/[\\/]+$/, "");
+  const rel = path.relative(__dirname, abs);
+  if (rel === "") return ".";
+  if (rel === "" || path.isAbsolute(rel) || /^[A-Za-z]:/.test(rel)) return abs.toLowerCase();
+  return rel.split(path.sep).join("/").toLowerCase();
+}
+
 const argv = process.argv.slice(2);
 let expect = null;
 const ei = argv.indexOf("--expect");
@@ -45,9 +75,19 @@ if (ei >= 0) {
   }
   argv.splice(ei, 2);
 }
+const wi = argv.indexOf("--write-pin");
+const writePin = wi >= 0;
+if (writePin) argv.splice(wi, 1);
 
 const root = argv[0] || path.join(os.homedir(), ".claude", "skills");
 if (!fs.existsSync(root)) { console.error(`no such skills root: ${root}`); process.exit(2); }
+
+// An explicit --expect still wins, so every existing invocation behaves as before.
+let pinSource = "--expect";
+if (expect === null) {
+  const pinned = loadPins()[pinKey(root)];
+  if (Number.isInteger(pinned)) { expect = pinned; pinSource = path.basename(PINS_FILE); }
+}
 
 // a canary is any .js/.py in the tree whose own source offers --canary
 function findCanaries(dir, out = []) {
@@ -109,10 +149,35 @@ if (skipped.length) console.log(`(${skipped.length} script(s) ship no --canary a
 console.log("(shell canaries, if your tree keeps any, are NOT run by this runner — run them by hand after touching a pre-commit hook or a PreToolUse gate)");
 let bad = failed.length > 0;
 if (failed.length) console.log(`failed: ${failed.join(", ")}`);
+// --write-pin RECORDS the discovered count as this tree's pin. It is the
+// deliberate "yes, I meant to add a canary" step, and it is the only way a pin
+// changes — nothing here ever updates a pin as a side effect of a normal run,
+// because a self-healing pin detects nothing.
+if (writePin) {
+  if (failed.length) {
+    console.log(`REFUSING to write a pin while ${failed.length} canary(ies) FAIL — fix them first.`);
+    process.exit(1);
+  }
+  const pins = loadPins();
+  const key = pinKey(root), was = pins[key];
+  pins[key] = files.length;
+  fs.writeFileSync(PINS_FILE, JSON.stringify(pins, null, 2) + "\n", "utf8");
+  console.log(`pin written: ${key} = ${files.length}${was === undefined ? " (new)" : was === files.length ? " (unchanged)" : ` (was ${was})`}`);
+  process.exit(0);
+}
+
 // a discovered denominator cannot detect its own shortfall — the pin can
-if (expect !== null && files.length !== expect) {
-  console.log(`COUNT MISMATCH: expected ${expect} canaries under ${root}, discovered ${files.length}. ` +
-    `"${pass}/${files.length} passed" is therefore not whole-tree health.`);
-  bad = true;
+if (expect === null) {
+  // Say it out loud. A tree with no pin is running with a discovered
+  // denominator, which is exactly the silent-green state the pin exists to
+  // prevent, and the old header-comment scheme made that state look normal.
+  console.log(`NO PIN for ${pinKey(root)} — count is self-reported and cannot detect a shortfall. Set one with --write-pin.`);
+} else {
+  console.log(`pin: ${expect} (from ${pinSource})`);
+  if (files.length !== expect) {
+    console.log(`COUNT MISMATCH: expected ${expect} canaries under ${root}, discovered ${files.length}. ` +
+      `"${pass}/${files.length} passed" is therefore not whole-tree health.`);
+    bad = true;
+  }
 }
 process.exit(bad ? 1 : 0);
