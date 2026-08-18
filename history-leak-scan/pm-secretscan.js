@@ -274,14 +274,17 @@ async function main() {
   // an unrecognised flag used to be filtered out silently, so a typo like
   // `--stage` fell through to history mode and the staged diff — the thing the
   // gate exists to check — was never scanned.
-  const bad = argv.filter((a) => a.startsWith("--") && !KNOWN.has(a));
+  // Single-dash too. `-C <dir>` is git's own spelling, so it is the likely typo
+  // here; it used to pass this filter, land in `repos` below as a PATH, and
+  // abort with "cannot change to '-C'" instead of naming the bad flag.
+  const bad = argv.filter((a) => a.startsWith("-") && !KNOWN.has(a));
   if (bad.length) { console.error(`unknown flag(s): ${bad.join(" ")}\nusage: pm-secretscan.js --history|--staged|--canary <repo>...`); process.exit(2); }
   // --staged-all is checked FIRST: `--staged --staged-all` must widen the scan,
   // not narrow it. Narrowing on flag order would reintroduce the -a bypass.
   const mode = argv.includes("--staged-all") ? "staged-all"
     : argv.includes("--staged") ? "staged"
     : "history";
-  const repos = argv.filter((a) => !a.startsWith("--"));
+  const repos = argv.filter((a) => !a.startsWith("-"));
   if (!repos.length) { console.error("usage: pm-secretscan.js --history|--staged|--canary <repo>..."); process.exit(2); }
   let total = 0;
   for (const repo of repos) {
