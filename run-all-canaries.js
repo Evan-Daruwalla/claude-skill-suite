@@ -215,7 +215,7 @@ console.log("(shell canaries, if your tree keeps any, are NOT run by this runner
 let bad = failed.length > 0;
 if (failed.length) console.log(`failed: ${failed.join(", ")}`);
 if (docPinAbsent.length) {
-  console.log(`(${docPinAbsent.length} canary(ies) whose SKILL.md states NO pin — UNCHECKED, not passing: ${docPinAbsent.slice(0, 5).join(", ")}${docPinAbsent.length > 5 ? ", +" + (docPinAbsent.length - 5) + " more" : ""})`);
+  console.log(`(${docPinAbsent.length} canary(ies) whose SKILL.md pin could not be ATTRIBUTED to them — UNCHECKED, not passing (it states none, or it states several and names no script): ${docPinAbsent.slice(0, 5).join(", ")}${docPinAbsent.length > 5 ? ", +" + (docPinAbsent.length - 5) + " more" : ""})`);
 }
 if (docPinStale.length) {
   console.log(`DOC PINS STALE (${docPinStale.length}): ${docPinStale.join(", ")}`);

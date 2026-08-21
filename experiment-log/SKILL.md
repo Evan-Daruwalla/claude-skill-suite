@@ -190,4 +190,5 @@ identical runs produce identical input/output hashes with every field present;
 and the log is proven append-only (earlier lines never rewritten). Hash
 correctness is pinned against a precomputed sha256 literal, so a broken/constant
 hash implementation fails the self-test rather than passing it circularly. MUST
-print `CANARY PASS 57/57` before you trust a result.
+`node experiment-log.js --canary` — MUST print `CANARY PASS 57/57` before you
+trust a result.
