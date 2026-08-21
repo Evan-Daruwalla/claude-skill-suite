@@ -115,7 +115,29 @@ const CLAUSE_SEP = /&&|\|\||;|\n/;
 // `git commit --dry-run && git commit -m x` nominate the harmless half and
 // exempt the whole line. Both the exemption test and the repo resolution must
 // use this same predicate or they can disagree about which clause is in play.
-const isRealCommit = (c) => /\bgit\b[\s\S]*\bcommit\b/.test(c) && !/--dry-run/.test(c);
+// Two bugs lived in the one-line version of this predicate, and both were
+// introduced by the fix for an EARLIER --dry-run bypass:
+//
+//   1. `!/--dry-run/.test(c)` was a SUBSTRING test against the raw clause, so
+//      `git commit -m "add --dry-run support"` made no clause qualify, no
+//      commit clause was found, and main() returned a bare allow() —
+//      silent-allow with a real key staged. A message merely NAMING the flag
+//      disarmed the gate.
+//   2. `/\bgit\b[\s\S]*\bcommit\b/` matched any clause whose TEXT mentions
+//      git and commit, so `echo '=== git commit ==='` or a `# git commit`
+//      comment before the real `cd <repo> && git commit` was selected as the
+//      commit clause. targetRepo's cd loop then ran `for k < i` with i=0,
+//      never saw the real cd, and scanned the session cwd instead.
+//
+// Fixes: the clause must BEGIN with git (after optional VAR=value prefixes),
+// and --dry-run is matched as a whole TOKEN, using the same quote-aware
+// tokenizer targetRepo already uses so a quoted message can never be read as
+// flags.
+const startsWithGit = (c) => /^\s*\(?\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*git\b/.test(c);
+const hasDryRunToken = (c) =>
+  (c.match(/"[^"]*"|'[^']*'|\S+/g) || []).some((t) => t === '--dry-run');
+const isRealCommit = (c) =>
+  startsWithGit(c) && /\bcommit\b/.test(c) && !hasDryRunToken(c);
 
 function targetRepo(cmd, cwd) {
   const clauses = cmd.split(CLAUSE_SEP);
@@ -299,6 +321,23 @@ function runCanary() {
     check(!usesCommitAll('git commit -m "all done"'), 'message containing "all" is NOT --all');
     check(!usesCommitAll('git commit -m "-a"'), 'message that looks like -a is NOT --all');
     check(!usesCommitAll('git commit --amend -m "x"'), "--amend is NOT --all");
+
+    // isRealCommit is token-scoped and start-anchored. Both properties were
+    // absent in a version that shipped green, so each gets an assertion:
+    // a message NAMING --dry-run must still be a real commit, and a clause that
+    // merely MENTIONS git+commit (echo banner, comment) must not be selected.
+    check(isRealCommit('git commit -m "add --dry-run support"'),
+      'isRealCommit is token-scoped: --dry-run inside a message is still a real commit');
+    check(!isRealCommit('git commit --dry-run -m x'),
+      'a genuine --dry-run token is NOT a real commit');
+    check(!isRealCommit("echo '=== git commit ==='"),
+      'an echo banner mentioning git commit is NOT a real commit');
+    check(!isRealCommit('# git commit step'),
+      'a comment mentioning git commit is NOT a real commit');
+    check(isRealCommit('GIT_AUTHOR_NAME=x git commit -m y'),
+      'a VAR=value prefix before git is still a real commit');
+    check(!isRealCommit('cd /some/repo'),
+      'a bare cd is NOT a real commit');
 
     const ok = fail === 0;
     console.log(`CANARY ${ok ? "PASS" : "FAIL"} ${pass}/${pass + fail}`);
