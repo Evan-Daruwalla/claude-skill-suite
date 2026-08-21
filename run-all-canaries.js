@@ -64,6 +64,68 @@ function pinKey(p) {
   return rel.split(path.sep).join("/").toLowerCase();
 }
 
+// ── the three decisions this runner makes, as testable functions ────────────
+// They were inline, which is why the runner — the script that gates every other
+// canary's verdict — shipped with NO self-test of its own for its whole life.
+// It also excludes itself from discovery by name, so it is structurally
+// invisible to its own sweep: every bug fixed in it on 2026-08-20/21 was
+// unpinned, and a regression in any of them would silently change what "N/N
+// passed" means. Extracted so `--canary` below can actually exercise them.
+
+// The `CANARY PASS N/N` a skill's own SKILL.md tells you to expect, or null if
+// it cannot be ATTRIBUTED to this script. Looks in the script's directory and
+// its parent, because hooks live one level down (`<skill>/hooks/<name>.js`).
+// `siblings` is passed in rather than closed over so this is callable from a
+// test with a fixture list.
+function findDocPin(scriptPath, allCanaries) {
+  const base = path.basename(scriptPath);
+  for (const dir of [path.dirname(scriptPath), path.dirname(path.dirname(scriptPath))]) {
+    const md = path.join(dir, "SKILL.md");
+    if (!fs.existsSync(md)) continue;
+    let text = "";
+    try { text = fs.readFileSync(md, "utf8"); } catch { continue; }
+    const lines = text.split("\n").filter((l) => /CANARY PASS \d+\/\d+/.test(l));
+    if (!lines.length) return null;
+    const num = (l) => { const m = /CANARY PASS (\d+)\/(\d+)/.exec(l); return m ? Number(m[2]) : null; };
+    // NAMING beats position. A line that mentions this script is unambiguous
+    // however many pins the file holds, and it is the only way a multi-script
+    // skill (project-memory holds three) can pin any of them at all.
+    const named = lines.filter((l) => l.includes(base) || l.includes(base.replace(/\.[^.]+$/, "")));
+    if (named.length === 1) return num(named[0]);
+    // Otherwise a lone pin belongs to this script only if it is the skill's only
+    // canary. An earlier version claimed the caller's dir walk "already
+    // establishes" that; it does not, and reporting the wrong script as stale is
+    // worse than reporting nothing — it sends you to edit a file that was right.
+    const siblings = allCanaries.filter((g) => g === scriptPath || g.startsWith(dir + path.sep));
+    if (lines.length === 1 && siblings.length === 1) return num(lines[0]);
+    return null;
+  }
+  return null;
+}
+
+// Is the doc's number different from the one the script actually printed?
+// Returns the printed denominator, or null when there is nothing to compare.
+function printedDenominator(verdictLine) {
+  const m = /CANARY PASS (\d+)\/(\d+)/.exec(verdictLine || "");
+  return m ? Number(m[2]) : null;
+}
+
+// What the pinned SET says versus what is on disk. A count cannot see a
+// substitution — delete one canary, add another, and the count is unchanged.
+function manifestDiff(have, expected) {
+  return {
+    added: have.filter((f) => expected.indexOf(f) < 0),
+    gone: expected.filter((f) => have.indexOf(f) < 0),
+  };
+}
+
+// Pick the canary's OWN verdict line. Several canaries end on a deliberate
+// negative-test fixture, so the LAST line of output reads like an error even
+// when the run passed.
+function verdictLineOf(outLines) {
+  return outLines.filter((l) => /CANARY (PASS|FAIL)|canary:/i.test(l)).pop();
+}
+
 const argv = process.argv.slice(2);
 let expect = null;
 let expectList = null;   // sorted canary paths when the pin is a manifest
@@ -79,6 +141,104 @@ if (ei >= 0) {
 const wi = argv.indexOf("--write-pin");
 const writePin = wi >= 0;
 if (writePin) argv.splice(wi, 1);
+
+// ── this runner's OWN canary ────────────────────────────────────────────────
+// Runs on EVERY invocation, not only under --canary. A self-test you have to
+// remember to type is the prose-pin scheme again: `tree-sync-canary.js` sat in
+// no pinned tree and therefore had zero automatic execution path until it was
+// wired into this file, and it failed with real drift the first time anyone ran
+// it by hand. This one is silent when it passes and fatal when it does not, so
+// there is no separate step to forget and no way to get a green sweep out of a
+// runner whose own logic is broken.
+function selfTest() {
+  const checks = [];
+  const T = (name, ok) => checks.push([name, !!ok]);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "rac-canary-"));
+  const mk = (rel, body) => {
+    const p = path.join(tmp, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, body);
+    return p;
+  };
+
+  // --- findDocPin: the function the 2026-08-21 landing-check caught ---------
+  const solo = mk("solo/solo.js", "// x\n");
+  mk("solo/SKILL.md", "MUST print `CANARY PASS 12/12` before you trust it.\n");
+  T("a lone pin in a single-canary skill is attributed", findDocPin(solo, [solo]) === 12);
+
+  // Two pins, one naming this script — naming must beat position. The real bug:
+  // experiment-log stated 57/57 and was reported as stating NO pin, because its
+  // hook's line was the only one naming a script.
+  const cli = mk("two/cli.js", "// x\n");
+  const hook = mk("two/hooks/hook.js", "// x\n");
+  mk("two/SKILL.md",
+    "`node hooks/hook.js --canary` — MUST print `CANARY PASS 26/26`.\n" +
+    "`node cli.js --canary` — MUST print `CANARY PASS 57/57`.\n");
+  T("naming beats position for the CLI", findDocPin(cli, [cli, hook]) === 57);
+  T("naming beats position for the hook", findDocPin(hook, [cli, hook]) === 26);
+
+  // Two pins, NEITHER naming a script: refuse rather than guess. Guessing by
+  // position is how a whole-file substitution rewrote both with one number.
+  const a2 = mk("amb/a.js", "// x\n"), b2 = mk("amb/b.js", "// x\n");
+  mk("amb/SKILL.md", "MUST print `CANARY PASS 3/3`.\nAlso `CANARY PASS 4/4`.\n");
+  T("two unnamed pins are refused, not guessed", findDocPin(a2, [a2, b2]) === null);
+
+  // ONE pin but MORE THAN ONE canary: also a guess. This is the case whose
+  // comment used to claim the dir walk "already establishes" a sole canary.
+  const c1 = mk("multi/one.js", "// x\n"), c2 = mk("multi/two.js", "// x\n");
+  mk("multi/SKILL.md", "MUST print `CANARY PASS 9/9`.\n");
+  T("a lone pin with siblings is refused", findDocPin(c1, [c1, c2]) === null);
+
+  const nopin = mk("none/none.js", "// x\n");
+  mk("none/SKILL.md", "no pin stated here\n");
+  T("a SKILL.md stating no pin yields null", findDocPin(nopin, [nopin]) === null);
+  const nomd = mk("bare/bare.js", "// x\n");
+  T("a skill with no SKILL.md yields null", findDocPin(nomd, [nomd]) === null);
+
+  // --- printedDenominator: what the staleness comparison reads -------------
+  T("the printed denominator is read, not the numerator",
+    printedDenominator("CANARY PASS 7/9") === 9);
+  T("a non-verdict line yields null", printedDenominator("all good") === null);
+  T("a missing verdict line yields null", printedDenominator(undefined) === null);
+
+  // --- manifestDiff: catches a SUBSTITUTION a count cannot ------------------
+  const swapped = manifestDiff(["a.js", "c.js"], ["a.js", "b.js"]);
+  T("a same-count substitution is detected",
+    swapped.gone.join() === "b.js" && swapped.added.join() === "c.js");
+  T("an identical set is clean",
+    manifestDiff(["a.js"], ["a.js"]).added.length === 0 &&
+    manifestDiff(["a.js"], ["a.js"]).gone.length === 0);
+
+  // --- verdictLineOf: a negative-test fixture must not be read as the verdict
+  T("the verdict line wins over a trailing fixture line",
+    verdictLineOf(["CANARY PASS 5/5", "error: this is a deliberate fixture"]) === "CANARY PASS 5/5");
+  T("no verdict line yields undefined", verdictLineOf(["just output"]) === undefined);
+
+  // --- pinKey: an absolute key would leak a local path into a public repo ---
+  T("a sibling tree keys relatively", !path.isAbsolute(pinKey(path.join(__dirname, "x"))));
+  T("this directory keys as '.'", pinKey(__dirname) === ".");
+  T("keys are lowercased so D:\\ and /d/ cannot disagree",
+    pinKey(path.join(__dirname, "MiXeD")) === pinKey(path.join(__dirname, "mixed")));
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+  return checks;
+}
+
+const selfChecks = selfTest();
+const selfBad = selfChecks.filter(([, ok]) => !ok);
+if (argv.includes("--canary")) {
+  selfChecks.forEach(([n, ok]) => console.log(`  ${ok ? "PASS" : "FAIL"}  ${n}`));
+  console.log(`\nCANARY ${selfBad.length ? "FAIL" : "PASS"} ${selfChecks.length - selfBad.length}/${selfChecks.length}`);
+  process.exit(selfBad.length ? 1 : 0);
+}
+if (selfBad.length) {
+  // Fatal, and BEFORE any tree is walked. A runner whose own pin/attribution
+  // logic is broken cannot produce a meaningful "N/N passed".
+  console.error(`run-all-canaries SELF-TEST FAILED (${selfBad.length}/${selfChecks.length}) — refusing to report on any tree:`);
+  selfBad.forEach(([n]) => console.error(`  FAIL  ${n}`));
+  process.exit(2);
+}
+
 
 const root = argv[0] || path.join(os.homedir(), ".claude", "skills");
 if (!fs.existsSync(root)) { console.error(`no such skills root: ${root}`); process.exit(2); }
@@ -122,46 +282,13 @@ const failed = [];
 const docPinStale = [];
 const docPinAbsent = [];
 
-// The `CANARY PASS N/N` a skill's own SKILL.md tells you to expect, or null if
-// it states none. Looks in the script's directory and its parent, because hooks
-// commonly live one level down (`<skill>/hooks/<name>.js`). A SKILL.md that
-// pins TWO scripts is skipped rather than guessed at — the line naming the hook
-// belongs to the hook, and matching them by position is how a whole-file
-// substitution can rewrite both with one number.
-function findDocPin(scriptPath) {
-  const base = path.basename(scriptPath);
-  for (const dir of [path.dirname(scriptPath), path.dirname(path.dirname(scriptPath))]) {
-    const md = path.join(dir, "SKILL.md");
-    if (!fs.existsSync(md)) continue;
-    let text = "";
-    try { text = fs.readFileSync(md, "utf8"); } catch { continue; }
-    const lines = text.split("\n").filter((l) => /CANARY PASS \d+\/\d+/.test(l));
-    if (!lines.length) return null;
-    const num = (l) => { const m = /CANARY PASS (\d+)\/(\d+)/.exec(l); return m ? Number(m[2]) : null; };
-    // NAMING beats position. A line that mentions this script is unambiguous
-    // however many pins the file holds, so try that first — it is also the only
-    // way a multi-script skill can pin any of them at all.
-    const named = lines.filter((l) => l.includes(base) || l.includes(base.replace(/\.[^.]+$/, "")));
-    if (named.length === 1) return num(named[0]);
-    // Otherwise a lone pin belongs to this script only if it is the skill's only
-    // canary. With siblings, which script the line means is a guess — and
-    // reporting the wrong one as stale is worse than reporting nothing, because
-    // it sends you to edit a file that was correct.
-    const siblings = files.filter((g) => g === scriptPath || g.startsWith(dir + path.sep));
-    if (lines.length === 1 && siblings.length === 1) return num(lines[0]);
-    return null;
-  }
-  return null;
-}
 for (const f of files) {
   const label = path.relative(root, f).replace(/\\/g, "/");
   const cmd = f.endsWith(".py") ? "python" : "node";
   const r = spawnSync(cmd, [f, "--canary"], { encoding: "utf8", timeout: 120000 });
   // a canary that cannot even start is a failure, not a skip
   const out = ((r.stdout || "") + (r.stderr || "")).trim().split("\n").filter(Boolean);
-  // prefer the canary's own verdict line: several canaries end on a deliberate
-  // negative-test fixture, so the LAST line reads like an error next to "PASS".
-  const verdict = out.filter((l) => /CANARY (PASS|FAIL)|canary:/i.test(l)).pop();
+  const verdict = verdictLineOf(out);
   const last = (verdict || out[out.length - 1] || "(no output)").slice(0, 90);
   if (r.status === 0) { pass++; console.log(`  PASS  ${label}  ${last}`); }
   else { failed.push(label); console.log(`  FAIL  ${label}  [exit ${r.status}]  ${last}`); }
@@ -171,11 +298,11 @@ for (const f of files) {
   // replaced one level up. Compare the doc's number to the number the script
   // actually printed, so raising a canary count cannot silently rot the doc
   // that tells the next reader what to expect.
-  const docPin = findDocPin(f);
-  if (docPin !== null && verdict) {
-    const m = /CANARY PASS (\d+)\/(\d+)/.exec(verdict);
-    if (m && Number(m[2]) !== docPin) {
-      console.log(`        ^ DOC PIN STALE: its SKILL.md says ${docPin}/${docPin}, the script printed ${m[2]}`);
+  const docPin = findDocPin(f, files);
+  const printed = printedDenominator(verdict);
+  if (docPin !== null && printed !== null) {
+    if (printed !== docPin) {
+      console.log(`        ^ DOC PIN STALE: its SKILL.md says ${docPin}/${docPin}, the script printed ${printed}`);
       docPinStale.push(label);
     }
   } else if (docPin === null) {
@@ -269,8 +396,7 @@ if (expect === null) {
   }
   if (expectList) {
     const have = files.map((f) => path.relative(root, f).replace(/\\/g, "/")).sort();
-    const added = have.filter((f) => expectList.indexOf(f) < 0);
-    const gone = expectList.filter((f) => have.indexOf(f) < 0);
+    const { added, gone } = manifestDiff(have, expectList);
     if (added.length || gone.length) {
       console.log("PIN MANIFEST MISMATCH — the SET of canaries changed, not just the count:");
       gone.forEach((f) => console.log(`  MISSING  ${f}`));
