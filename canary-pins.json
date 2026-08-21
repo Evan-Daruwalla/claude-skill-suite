@@ -1,3 +1,25 @@
 {
-  ".": 20
+  ".": [
+    "bisect-driver/bisect-driver.js",
+    "code-check/hooks/postwrite-check.js",
+    "commit-gate/hooks/pretooluse-commit-gate.js",
+    "cron-task-manage/cron-audit.js",
+    "cve-audit/cve-audit.js",
+    "data-integrity-audit/integrity_audit.py",
+    "decision-log/decision-log.js",
+    "determinism-guard/determinism-guard.js",
+    "etl-validate/etl_validate.py",
+    "experiment-log/experiment-log.js",
+    "experiment-log/hooks/subagent-log.js",
+    "flaky-test-detector/flaky-detect.js",
+    "golden-lock/golden-lock.js",
+    "history-leak-scan/pm-secretscan.js",
+    "landing-check/landing-probe.js",
+    "local-secrets-manage/local-secrets.js",
+    "milestone-track/milestone-track.js",
+    "path-quirk-audit/path-quirk-audit.js",
+    "seed-control/seed-control.js",
+    "shell-portability/shell-portability.js",
+    "token-squeeze/cli.js"
+  ]
 }
