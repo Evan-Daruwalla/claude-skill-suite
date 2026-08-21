@@ -1,17 +1,18 @@
 ---
 name: audit-code
 description: >-
-  Exhaustive CODE audit of the whole project — every source file, run COLD
-  by a fresh auditor, fanned out to parallel workers under a file manifest
-  that proves coverage. Fifteen methods (invariant tracing, call-site
-  contracts, error paths, static tooling, relative-churn targeting, dynamic
-  verification, spec conformance, data-at-rest, deps and supply chain,
-  test-suite validation via mutation score, fuzzing and property-based
-  exploration, adversary-first threat modelling, concurrency, architecture
-  and dependency structure, compliance surface) plus a four-generator
-  edge-case sweep. Use when: "audit the code", "code audit", "find bugs /
-  security fixes / edge cases across the codebase". Findings only; fixes
-  after approval.
+  Exhaustive CODE audit, run COLD by a fresh auditor and fanned out to
+  parallel workers under a file manifest that proves coverage. Fifteen
+  methods (invariant tracing, call-site contracts, error paths, static
+  tooling, relative-churn targeting, dynamic verification, spec conformance,
+  data-at-rest, deps and supply chain, test-suite validation via mutation
+  score, fuzzing and property-based exploration, adversary-first threat
+  modelling, concurrency, architecture and dependency structure, compliance
+  surface) plus a four-generator edge-case sweep. Defaults to the whole
+  project; pass "recent" to scope to work since a base ref, plus the blast
+  radius of unchanged callers. Use when: "audit the code", "code audit",
+  "audit my changes", "find bugs / security fixes / edge cases". Findings
+  only; fixes after approval.
 ---
 
 # Audit — code, whole project
@@ -20,14 +21,16 @@ The code half of the full sweep, at full depth. Use this when the docs are not i
 
 ## Which audit is this?
 
-| Skill | Domain | Scope |
-|---|---|---|
-| `audit` | code + docs + cross | whole project |
-| **`audit-code`** | code | whole project |
-| `audit-docs` | docs | whole project |
-| `audit-recent` | code + docs + cross | recent work only |
-| `audit-code-recent` | code | recent work only |
-| `audit-docs-recent` | docs | recent work only |
+| Skill | Domain |
+|---|---|
+| `audit` | code + docs + the cross-domain pass |
+| `audit-code` | code only |
+| `audit-docs` | docs only |
+
+**Scope is an argument, not a separate skill.** Default is the whole project.
+Pass `recent` — `/audit-code recent`, or "audit my recent changes" — to scope to
+work since a base ref. The methods are identical either way; only what they are
+pointed at changes.
 
 ## Not this skill
 
@@ -52,14 +55,39 @@ belief, never "this part is known-good". If the session is genuinely fresh, you
 ARE the cold auditor. Cold means unbiased, not amnesiac: read the project's own
 docs, as **claims under test**.
 
-**1. Resolve scope and build the manifest.** Per `scoping.md`. This working
-directory may contain several git repos rather than being one — do not silently
-pick one, and do not sweep all of them under a single manifest without asking.
+**1. Resolve scope.** Per `scoping.md`.
+
+**FULL scope (default).** Build the manifest before spawning anyone. Enumerate
+with `git -c core.quotepath=false ls-files` — **not** a `$`-anchored extension
+grep, which silently drops every non-ASCII filename (this cost a real audit its
+most important document on 2026-08-21). Reconcile the count against a second
+enumeration. This working directory may contain several git repos rather than
+being one: do not silently pick one, and do not sweep them all under a single
+manifest without asking.
+
+**RECENT scope (when `recent` is passed).** Resolve the base ref deliberately
+and say which you chose. Use **three-dot** `git diff base...HEAD` — two-dot
+picks up base-branch drift and is the classic wrong answer. Include uncommitted
+and untracked work (`git status --porcelain`, `git diff`, `git diff --staged`;
+untracked files need `git add -N` to appear in a diff at all — there is no
+`--include-untracked` flag). Rank by **relative** churn, not absolute:
+Nagappan & Ball (ICSE 2005) measured absolute churn at R^2 = 0.052 and
+size-normalized churn at R^2 = 0.811.
+
+Then **walk the blast radius — mandatory.** Take the changed set, walk reverse
+dependencies (import graph, call graph, `git log -G` over changed symbols), and
+pull unchanged callers into scope. A changed function's untouched callers are
+exactly where a broken contract surfaces. Without this, "recent audit clean"
+means only "the diff reads fine".
+
+**Recent-scoped reports state their own blind spots** — what was not swept, and
+that they cannot see pre-existing defects in untouched code or a latent bug the
+change newly made reachable.
 
 **2. Every file in scope is assigned to a worker**, and every exclusion is
-listed with its reason. The coverage map is computed from the manifest, not
-narrated from memory. "38 of 41 files swept, 3 vendored" is checkable;
-"comprehensive sweep" is not.
+listed with its reason. The coverage map is computed from the manifest and the
+workers' reconciled search trails, not narrated from memory. "38 of 41 files
+swept, 3 vendored" is checkable; "comprehensive sweep" is not.
 
 **Fan out.** Per `fanout.md`. Sonnet workers, **eight maximum across all
 levels** including any delegates. Pre-register the acceptance rubric before any

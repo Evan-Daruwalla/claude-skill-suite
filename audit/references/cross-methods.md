@@ -1,6 +1,6 @@
 # Cross-domain sweep — X1–X5
 
-Read by `audit` and `audit-recent` only. The single-domain skills do not run
+Read by `audit` only, at either scope. The single-domain skills do not run
 this, and saying so is the honest boundary: **`audit` is not `audit-code` plus
 `audit-docs`.** It is those two plus this file, and this file is the reason the
 combined skill exists.

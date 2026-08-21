@@ -1,6 +1,6 @@
 # Code method sweep — M1–M15 and the edge-case generators
 
-Read by `audit`, `audit-code`, `audit-recent`, `audit-code-recent`. The
+Read by `audit` and `audit-code`, at either scope. The
 scope differs between those four; the methods below do not.
 
 This file is the accumulated scar tissue of real audits on this machine. Where

@@ -16,7 +16,7 @@ Two hooks, one scanner (`../history-leak-scan/pm-secretscan.js --staged`):
 | Hook | File | Fires when | Effect |
 |---|---|---|---|
 | git `pre-commit` | `hooks/pre-commit` | you commit from the shell | exit 1 → git aborts the commit |
-| PreToolUse (matcher `Bash`) | `hooks/pretooluse-commit-gate.js` | the model runs `git commit` via Bash | `permissionDecision:"deny"` → the tool call is blocked |
+| PreToolUse (matcher `Bash\|PowerShell`) | `hooks/pretooluse-commit-gate.js` | the model runs `git commit` via Bash | `permissionDecision:"deny"` → the tool call is blocked |
 
 Both fail OPEN on scanner error (never wedge commits) — but NOISILY: each
 prints/surfaces a "gate SKIPPED (fail-open), commit is UNSCANNED" warning,

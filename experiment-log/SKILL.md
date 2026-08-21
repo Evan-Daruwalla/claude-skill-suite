@@ -29,7 +29,7 @@ narrative docs. It never writes to `HANDOFF.md` or the append-only record —
 ## Commands
 
 ```
-node experiment-log.js log --cmd "<command>" [--in a,b] [--out c,d] [--note "..."] [--file <path>] [--no-run]
+node experiment-log.js log --cmd "<command>" [--in a,b] [--out c,d] [--note "..."] [--file <path>] [--python <path>] [--no-run]
 node experiment-log.js show [--file <path>]
 node experiment-log.js --canary
 ```
@@ -53,6 +53,12 @@ node experiment-log.js --canary
   Nothing is ever faked.
 - `ts` is stamped when the entry is WRITTEN, i.e. AFTER the command finished.
   `durationMs` gives you the other end.
+- **`--python <path>`** declares the interpreter the run actually used. Usually
+  unnecessary: when `--cmd` starts with a python interpreter it is parsed off
+  the front automatically. Give it when the interpreter is hidden behind a
+  wrapper (`pytest ...`, `make ...`, an activated venv, `cd sub && python
+  x.py`) — the parser reads only the FIRST token and records `null` rather than
+  guess. The declared path is recorded as `versions.pythonRun`.
 
 ### The case: a backtest with a frozen regression report
 
@@ -189,6 +195,6 @@ Self-tests both directions in a throwaway temp dir: a successful run records
 identical runs produce identical input/output hashes with every field present;
 and the log is proven append-only (earlier lines never rewritten). Hash
 correctness is pinned against a precomputed sha256 literal, so a broken/constant
-hash implementation fails the self-test rather than passing it circularly. MUST
-`node experiment-log.js --canary` — MUST print `CANARY PASS 57/57` before you
+hash implementation fails the self-test rather than passing it circularly.
+`node experiment-log.js --canary` MUST print `CANARY PASS 57/57` before you
 trust a result.

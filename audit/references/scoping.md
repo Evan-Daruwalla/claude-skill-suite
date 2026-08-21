@@ -1,6 +1,6 @@
 # Scope resolution — full and recent
 
-Read by all six audit skills. Answers two questions before any sweep starts:
+Read by all three audit skills. Answers two questions before any sweep starts:
 **what is in scope**, and **how do we prove we covered it.**
 
 Getting this wrong is the quiet failure. An audit that swept 60% of the tree

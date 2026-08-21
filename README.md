@@ -29,7 +29,7 @@ a skill the model has to remember to invoke.
 | **compact-io** | Always-on output-density style: lead with the answer, cut filler, plain words — governed by a **never-cut list** (numbers, paths, commands, caveats, tradeoffs, negations) so density never drops a fact. Also compresses a prompt/doc for reuse on request. Not a length cap. |
 | **opus-workers** | Cost-tiered orchestration: when an expensive flagship (e.g. Fable 5, max/ultracode) spins up agents, route the WORKERS one tier cheaper and keep the flagship as a thin reviewer — accept, or send back with specific pointers, bounded to 2 redo rounds. The cheaper model does the bulk generation; the flagship only reviews. A *spawned* reviewer is never cheaper: it re-bills the worker's whole output as its own input and buys no catch-rate edge on an already-specified rubric. |
 | **code-check** | Post-write verification pass, fired by a `PostToolUse` hook on `Edit`/`Write` of a **code** file (docs/config excluded, debounced so a burst nudges once): re-read the real diff, make it actually run with pasted output, confirm non-trivial logic has one runnable check, confirm every changed line traces to the request. Bans "should work." The firing is deterministic; running the pass is the model's job — a hook cannot invoke a skill. |
-| **landing-check** | Post-work verification sweep run by a FRESH agent, invoked only: did the change land where it actually EXECUTES (a fix written to a `.git/hooks` file is dead code in a repo that sets `core.hooksPath`), do the stated claims match disk (universals and counts re-derived independently), and what should have moved and didn't (sibling copies, docs quoting the old value, byproducts). Reads claims from artifacts, never from the author's account — it is not self-grading. Defers code correctness to `/code-review`. |
+| **landing-check** | Post-work verification sweep run by a FRESH agent, invoked only: did the change land where it actually EXECUTES (a fix written to a `.git/hooks` file is dead code in a repo that sets `core.hooksPath`), and does a new guard actually FIRE on a planted positive, do the stated claims match disk (universals, counts, quoted output and numbers re-derived independently), what should have moved and didn't (sibling copies, corrections that did not propagate, docs quoting the old value, byproducts), and did anything land where it must NOT (a private identifier in a public copy). Reads claims from artifacts, never from the author's account — it is not self-grading. Defers code correctness to `/code-review`. |
 
 ## Deterministic quality & reproducibility gates
 
@@ -59,12 +59,9 @@ The model just runs them — output quality doesn't degrade with a cheaper model
 | Skill | What it does |
 |---|---|
 | **trusted-advisor** | Candid advisor in two layers: a BASELINE (verdict first, no yes-man, honest calibration — always on) and a triggered FULL-CRITIQUE mode (severity-ranked, flaw-typed analysis). Yields to project/task instructions on format; never on honesty. |
-| **audit** | Exhaustive project audit across **both** domains — code and docs, plus the cross-domain pass neither can do alone (documented claims reconciled against observed behaviour). Run COLD by a fresh auditor, fanned out to parallel workers under a file manifest that proves coverage. Findings carry verification tiers (CONFIRMED / REPORTED / CONSTRUCTED / REFUTED); load-bearing negatives and architecture-level findings get their own sections. Diagnosis-first — it does not fix before you approve. |
+| **audit** | Exhaustive project audit across **both** domains — code and docs, plus the cross-domain pass neither can do alone (documented claims reconciled against observed behaviour). Run COLD by a fresh auditor, fanned out to parallel workers under a file manifest that proves coverage. Findings carry verification tiers (CONFIRMED / REPORTED / CONSTRUCTED / REFUTED); load-bearing negatives and architecture-level findings get their own sections. Diagnosis-first — it does not fix before you approve. **Scope is an argument:** all three default to the whole project, and `recent` scopes to work since a base ref — including uncommitted and untracked changes, ranked by *relative* churn, with a mandatory blast-radius walk onto unchanged callers. |
 | **audit-code** | The code half at full depth: fifteen methods (invariant tracing, call-site contracts, error paths, static tooling, relative-churn targeting, dynamic verification, spec conformance, data-at-rest, deps/supply-chain, mutation-score test-suite validation, fuzzing/property-based exploration, adversary-first threat modelling, concurrency, architecture/dependency structure, compliance surface) plus four edge-case generators. |
 | **audit-docs** | Documentation audited for **defects**, against evidence — not a content inventory and not a style pass. Eight methods, led by claim verification (every count, existence and behavioural claim tested against disk) and code-element reference drift. Hunts WRONG before MISSING before UGLY, because that is the measured practitioner priority. |
-| **audit-recent** | The full both-domain sweep aimed at a diff instead of a tree — including uncommitted and untracked work, ranked by *relative* churn, with a mandatory blast-radius walk that pulls unchanged callers into scope. |
-| **audit-code-recent** | Code-only, recent-scope. The cheapest real audit in the set. |
-| **audit-docs-recent** | Docs-only, recent-scope — and, in the other direction, the docs that recent *code* changes should have updated and didn't. |
 | **skill-vet** | Evaluates a third-party skill / plugin / MCP server before you install it — capability, risk, redundancy with what you already run — and gives a keep/skip verdict. |
 | **research-brief** | Turns a topic into a sourced, decision-oriented research document — every claim cited, structured for the decision it feeds. |
 | **reorg-proposal** | Read-only codebase-reorganization advisor: inspects a repo and proposes a file/folder restructure — current tree, proposed tree, and a per-move risk table naming what each move breaks (imports, paths, build, CI) — and **writes nothing**. Grounds every path in a real `git ls-files` listing; "already coherent, propose nothing" is a valid outcome. |
@@ -81,6 +78,7 @@ ignore a placeholder:
 node run-all-canaries.js .                                 # every bundled canary, one command
 node history-leak-scan/pm-secretscan.js --canary            # -> 7 real caught, 0 false positives -> PASS
 node history-leak-scan/pm-secretscan.js --history <repo>   # scan full history
+node landing-check/landing-probe.js --canary                # -> CANARY PASS 23/23 (hooksPath / twin / registration / remote census)
 node llm-eval-harness/score.js commit-message <file> --model <name>
 node token-squeeze/test.js                                 # corpus guards (after: npm install)
 ```
@@ -90,17 +88,17 @@ node token-squeeze/test.js                                 # corpus guards (afte
 - **Node tools** (history-leak-scan, commit-gate, llm-eval-harness, golden-lock,
   local-secrets-manage, determinism-guard, path-quirk-audit, cve-audit,
   shell-portability, bisect-driver, seed-control, flaky-test-detector,
-  cron-task-manage, experiment-log, milestone-track, decision-log): clone
-  anywhere, run with `node`. No dependencies.
+  cron-task-manage, experiment-log, milestone-track, decision-log,
+  landing-check's `landing-probe.js`): clone anywhere, run with `node`. No
+  dependencies.
 - **Python tools** (data-integrity-audit, etl-validate): `python` on PATH,
   stdlib only. No dependencies.
 - **token-squeeze:** `cd token-squeeze && npm install` once (pulls
   `gpt-tokenizer`), then `node cli.js` / `node test.js`.
 - **Prose skills** (compact-io, opus-workers, trusted-advisor, audit,
-  audit-code, audit-docs, audit-recent, audit-code-recent,
-  audit-docs-recent, skill-vet, research-brief, reorg-proposal,
+  audit-code, audit-docs, skill-vet, research-brief, reorg-proposal,
   github-repo-polish, venue-fit): drop the folder into
-  `~/.claude/skills/`; nothing to install. **The five `audit-*` skills read
+  `~/.claude/skills/`; nothing to install. **`audit-code` and `audit-docs` read
   shared reference files from `audit/references/` — install `audit`
   alongside any of them.**
 - **commit-gate PreToolUse hook:** add to `~/.claude/settings.json` under

@@ -1,6 +1,6 @@
 # Fan-out — parallel workers, cold entry, and merging what they return
 
-Read by all six audit skills. Governs who gets spawned, what they are told,
+Read by all three audit skills. Governs who gets spawned, what they are told,
 what they are NOT told, and how their output becomes one report.
 
 ---
@@ -15,7 +15,7 @@ Sonnet for searching and reading; the session model synthesises, adjudicates
 and re-verifies. This matches `opus-workers`: cheap tier does the bulk, the
 expensive tier reviews against a rubric registered in advance.
 
-For a `-recent` audit the budget is usually 2–4, not 8. Spending eight workers
+For a recent-scoped audit the budget is usually 2–4, not 8. Spending eight workers
 on a twelve-file diff is waste, and the coverage map will show them tripping
 over each other.
 
@@ -106,6 +106,46 @@ were comparable.
    search a second way and say which tools produced which result.
 5. **State what you could not check**, and why. An honest gap is a result.
 6. Severity is argued, not asserted — say what breaks and for whom.
+7. **Emit a SEARCH TRAIL.** For every method, state the exact enumeration
+   command you ran, the count it returned, and every depth, filter, glob or
+   path limit inside it. A finding is a claim about what exists; the trail is
+   your claim about what you looked at. Both get checked.
+
+---
+
+## The coverage-provenance gate
+
+Verification tiers cover *findings*. Until 2026-08-21 nothing covered
+*coverage* — and that is precisely where this fan-out failed on its first real
+run.
+
+Three separate defects turned out to be one defect. A `find -maxdepth 4` that
+silently truncated. A manifest whose `grep` dropped every non-ASCII filename,
+including the most important document in the repo. A budget a worker never saw
+because it lived in this file rather than in the prompt. Each produced a
+confident claim about what had been examined, and **nothing in fifteen methods
+had the job of checking that claim.** A worker can say "I checked everything",
+be wrong, and the report still reads clean.
+
+So the trail is reconciled before any finding is trusted — and *especially*
+before a clean one is:
+
+1. **Count reconciliation.** The worker's trail count against the manifest
+   shard it was handed. Any discrepancy is a finding about the audit itself,
+   resolved before the report ships.
+2. **Limit disclosure.** Every `-maxdepth`, `head`, glob, exclude, or sample
+   stated with its value. The undisclosed limit is the defect; the limit itself
+   is usually fine.
+3. **Downgrade rule.** A method whose trail does not reconcile is marked
+   **not swept** — never "no findings" — however thorough the worker's prose
+   sounds. Absence of findings from an unreconciled sweep is absence of
+   evidence.
+4. **The orchestrator independently re-enumerates at least one shard** and
+   compares. Not all of them: one is enough to catch a *systematic* error, and
+   a systematic error is the kind that matters.
+
+Cheap, and non-negotiable. The trail costs a worker a few lines. Skipping it
+costs you a confident report about a subset.
 
 ---
 
@@ -194,9 +234,11 @@ marked against the main table rather than renumbering it.
 > spawn any.** The audit has a hard cap of eight agents across all levels and
 > the orchestrator has already allocated it.
 >
-> **Persistence: write your findings to `<path>` incrementally, after each
-> check, before returning anything.** If you are interrupted or stopped, that
-> file is your deliverable. Do not hold results in memory until the end.
+> **Persistence: return your findings in CHUNKS as you go — after each method
+> completes, return what you have so far.** Do not hold results until the end;
+> anything unreturned when you stop is lost. **Do not try to write findings to
+> a file** — the harness refuses report-shaped writes from subagents, so the
+> attempt fails and wastes the turn.
 >
 > Your manifest shard is `<N files>`, listed below. Every file in it must be
 > accounted for in your output: swept, or not-swept with a reason.
@@ -205,7 +247,7 @@ marked against the main table rather than renumbering it.
 > handoff/status doc, PRD>`. They describe what the project believes about itself. Your job
 > includes checking whether that is true.
 >
-> Acceptance rubric — output violating it is rejected: `<paste the six rules>`
+> Acceptance rubric — output violating it is rejected: `<paste the seven rules>`
 >
 > Return: `<the schema>`. Your final text is the return value, not a message to
 > a human — no preamble, no summary of what you did.
@@ -223,11 +265,13 @@ Both were observed failing on 2026-08-21, the first time this fan-out ran:
   own, taking a five-worker audit to eleven agents. The worker never saw this
   file. A constraint that lives only in the orchestrator's reference is not a
   constraint on the worker.
-- **The persistence instruction loses to delegation.** The same worker, having
-  spawned children, returned a status message and wrote no findings file at
-  all — its incremental-write instruction was displaced by the act of
-  coordinating. State persistence as the FIRST thing the worker does, and say
-  explicitly that the file is the deliverable.
+- **Findings cannot be persisted to a file at all, and telling a worker to try
+  wastes its turn.** The harness refuses report-shaped writes from subagents
+  ("Subagents should return findings as text, not write report files"). Two
+  workers hit it independently. One of them, having also spawned six delegates,
+  returned a bare status message with nothing recoverable behind it — ten of
+  the twelve files in its shard ended at zero coverage. **Chunked returns are
+  the only persistence that survives an interruption here.**
 
 Both are the same underlying error: assuming a worker inherits the
 orchestrator's context. It does not. Anything that must bind the worker goes in

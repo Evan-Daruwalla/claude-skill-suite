@@ -1,6 +1,6 @@
 # Docs method sweep — D1–D8
 
-Read by `audit`, `audit-docs`, `audit-recent`, `audit-docs-recent`. The scope
+Read by `audit` and `audit-docs`, at either scope. The scope
 differs between those four; the methods do not.
 
 **Docs are audited the way code is audited: for defects, against evidence.**

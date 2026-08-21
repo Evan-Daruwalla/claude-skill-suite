@@ -2,7 +2,7 @@
 name: determinism-guard
 description: >-
   Ephemeral invariance checker — run a command N times and prove
-  byte-identical stdout + exit code (first-divergence diff on failure);
+  byte-identical stdout, stderr AND exit code (first-divergence diff on failure);
   --files sha256s listed artifacts per run; --shuffle-stdin catches
   order-dependence. No stored baselines — freezing an output across time is
   golden-lock. Use when: "is this deterministic", "same output every run",
@@ -34,7 +34,8 @@ node determinism-guard.js --canary
 ```
 
 - **default** runs `--cmd` **N** times (N=2) through the shell and compares
-  stdout AND exit code byte-exact across all runs. INVARIANT → exit 0; any drift →
+  stdout, stderr AND exit code byte-exact across all runs — stderr counts, so a
+run that writes timestamps or progress noise there reports VARYING. INVARIANT → exit 0; any drift →
   exit 1 with the first diverging stdout line (`run#1 -` / `run#k +`).
 - **--files "a,b,c"** additionally sha256s each listed file *after every run* and
   compares the hashes — catches a build/script that emits different bytes each

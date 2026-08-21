@@ -22,14 +22,16 @@ contradicts, or a function whose name promises what its body does not do.
 
 ## Which audit is this?
 
-| Skill | Domain | Scope |
-|---|---|---|
-| **`audit`** | code + docs + cross | whole project |
-| `audit-code` | code | whole project |
-| `audit-docs` | docs | whole project |
-| `audit-recent` | code + docs + cross | recent work only |
-| `audit-code-recent` | code | recent work only |
-| `audit-docs-recent` | docs | recent work only |
+| Skill | Domain |
+|---|---|
+| **`audit`** | code + docs + the cross-domain pass |
+| `audit-code` | code only |
+| `audit-docs` | docs only |
+
+**Scope is an argument, not a separate skill.** Default is the whole project.
+Pass `recent` — `/audit recent`, or "audit what I just did" — to scope to work
+since a base ref. The methods are identical either way; only what they are
+pointed at changes.
 
 Use `audit` when the user says "audit" with no qualifier. It is the default and the
 most expensive.
@@ -75,6 +77,22 @@ Produce an explicit file manifest: every file in scope, each assigned to at
 least one worker. **The manifest is what turns "audited everything" into a
 claim you can prove rather than assert.** Exclusions are listed with reasons
 (vendored `node_modules/`, generated output), never silently dropped.
+
+Enumerate with `git -c core.quotepath=false ls-files`, **never** a `$`-anchored
+extension grep — that silently drops every non-ASCII filename, and on
+2026-08-21 it cost a real run of this skill the single most important document
+in the tree. Reconcile the count against a second enumeration before trusting
+it.
+
+**If `recent` was passed**, resolve the base ref instead and say which you
+chose: three-dot `git diff base...HEAD` (two-dot picks up base drift and is the
+classic wrong answer), plus uncommitted and untracked work, ranked by
+**relative** churn rather than absolute — R^2 = 0.811 versus 0.052 (Nagappan &
+Ball, ICSE 2005). Then **walk the blast radius**, which is mandatory, not
+optional: pull unchanged callers of changed symbols into scope, because that is
+where a broken contract actually surfaces. A recent-scoped report states its
+own blind spots — it cannot see pre-existing defects in untouched code, or a
+latent bug the change newly made reachable.
 
 **3. Fan out.** Per `references/fanout.md`. Sonnet workers, **eight maximum
 across all levels, including any delegates a worker spawns.** Pre-register the

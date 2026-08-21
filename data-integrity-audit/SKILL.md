@@ -39,6 +39,10 @@ Two hard rules:
   is live — even a read-only open takes a shared lock and can read a
   half-written transaction as "current." Read-only mode protects the *file*,
   not your interpretation of a live write.
+  **This rule is UNENFORCEABLE — nothing in the script detects a live writer.**
+  There is no lock probe, no `busy_timeout`, no WAL/journal-mode check; `mode=ro`
+  only stops the tool from writing. It is a convention you keep, and nothing
+  will catch you breaking it.
 - The audit is **read-only by design** — it will never repair. On a FAIL, capture
   the output and hand the fix to a writer path under your own test discipline
   (any frozen/regression assertions must still hold after the fix).

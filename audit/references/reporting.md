@@ -1,6 +1,6 @@
-# Shared report contract — all six audit skills
+# Shared report contract — all three audit skills
 
-Read by `audit`, `audit-code`, `audit-docs` and their `-recent` variants. One
+Read by `audit`, `audit-code` and `audit-docs`, at either scope. One
 contract so two audits of the same tree are comparable, and so a finding keeps
 its meaning when it moves between reports.
 
@@ -170,6 +170,22 @@ If section 2 has entries, state explicitly that they outrank this list.
 
 Every method and generator marked **swept** / **partial** / **not swept**, each
 with a reason. Absence of findings means nothing where coverage was not real.
+
+**The map is computed from the reconciled search trails, not written from
+impression.** Each worker returns a trail per `fanout.md` rule 7 — the
+enumeration command, the count it returned, and every depth/filter/glob limit
+inside it. Before this section is written:
+
+- reconcile each trail count against the manifest shard that worker was given;
+- state any discrepancy as a finding about the audit itself;
+- **mark any method whose trail does not reconcile as `not swept`** — never
+  "no findings";
+- re-enumerate at least one shard independently and say so here, with both
+  numbers.
+
+A coverage map that cites no trail is an assertion. The whole point of this
+section is that it is checkable, and it stopped being checkable the moment it
+became prose.
 
 **"Partial" must say what made it partial and which direction the error runs.**
 The 2026-08-20 map is the standard: *"M5 partial (coverage measure = canary
