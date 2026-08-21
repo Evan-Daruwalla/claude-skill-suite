@@ -99,15 +99,24 @@ function main() {
 
   // one state file per session, and sessions are never revisited — prune stale
   // ones so tmp does not accumulate a file per session forever.
-  try {
-    const cutoff = now - 24 * 60 * 60 * 1000;
-    for (const f of fs.readdirSync(os.tmpdir())) {
-      if (!/^claude-code-check-.*\.json$/.test(f)) continue;
-      const p = path.join(os.tmpdir(), f);
-      try { if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p); } catch { /* skip */ }
+  //
+  // Only when the nudge is DUE, not on every write. This enumerates the WHOLE of
+  // %TEMP% — a directory that routinely holds thousands of entries — and it ran
+  // on every single Edit/Write of a code file, inside a hook with a 5-second
+  // budget, to delete files that are at least a day old. Tying it to `due` keeps
+  // it frequent enough (the debounce is minutes, not days) at a fraction of the
+  // cost, and needs no randomness to be reproducible.
+  if (due) {
+    try {
+      const cutoff = now - 24 * 60 * 60 * 1000;
+      for (const f of fs.readdirSync(os.tmpdir())) {
+        if (!/^claude-code-check-.*\.json$/.test(f)) continue;
+        const p = path.join(os.tmpdir(), f);
+        try { if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p); } catch { /* skip */ }
+      }
+    } catch {
+      /* best-effort housekeeping only */
     }
-  } catch {
-    /* best-effort housekeeping only */
   }
 
   if (!due) return 0;

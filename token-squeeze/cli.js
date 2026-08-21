@@ -70,12 +70,22 @@ function runCanary() {
   return ok;
 }
 
+// Exit 2 for usage, not 1. Every other tool in this suite reserves 1 for
+// "findings / mismatch" and 2 for "you invoked me wrong"; this one used 1 for
+// both, so a wrapper could not tell a typo'd path from a real result. And a
+// missing file threw a raw Node ENOENT stack trace, which no sibling does.
 const file = args.find((a) => !a.startsWith('--'));
 if (!file) {
   console.error('usage: token-squeeze <file|-> [--clean] [--stats] [--json]');
-  process.exit(1);
+  process.exit(2);
 }
-const input = fs.readFileSync(file === '-' ? 0 : file, 'utf8');
+let input;
+try {
+  input = fs.readFileSync(file === '-' ? 0 : file, 'utf8');
+} catch (e) {
+  console.error(`error: cannot read ${file === '-' ? '<stdin>' : file}: ${e.code || e.message}`);
+  process.exit(2);
+}
 
 const { kept } = loadDict(tok);
 const { text: output, applied } = runAB(input, kept, { clean: flags.has('--clean') });

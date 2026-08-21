@@ -80,4 +80,4 @@ Plants one instance of every class in a throwaway temp dir and asserts all are
 flagged (the bad direction), plus a clean dir with the same file *types* — a pure
 -ASCII `.bat`, an LF `.sh`, a BOM-free valid-UTF-8 `.json` (emoji included), a
 shadow-named file that is NOT in root — yields zero findings (the good
-direction). MUST print `CANARY PASS 10/10` before you trust a result.
+direction). MUST print `CANARY PASS 25/25` before you trust a result.

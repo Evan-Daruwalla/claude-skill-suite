@@ -62,12 +62,40 @@ function resultFails(raw) {
   return !Number.isNaN(n) && n !== 0;
 }
 
+// Parse schtasks' Next Run Time EXPLICITLY as M/D/YYYY, never via Date.parse.
+//
+// `Date.parse` on a bare "01/02/2026" is locale/engine-dependent, and on a
+// non-US-locale Windows host schtasks emits D/M/YYYY. So for days 1-12 the two
+// readings are BOTH valid dates and silently disagree — "1 Feb" vs "2 Jan" —
+// which can invert the past/future verdict this function exists to produce.
+// Days 13-31 are the loud half: Date.parse yields NaN and the unparseable guard
+// already caught them. The quiet half was the dangerous one.
+//
+// Refusing anything that is not M/D/Y is deliberate: schtasks on a US-locale
+// host is the documented input, and a wrong date reported confidently is worse
+// than an "unparseable" flag telling you to look.
+function parseSchtasksDate(s) {
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ ,]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?)?$/i.exec(s.trim());
+  if (!m) return NaN;
+  const mo = +m[1], d = +m[2], y = +m[3];
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return NaN;
+  let h = m[4] ? +m[4] : 0;
+  const mi = m[5] ? +m[5] : 0, se = m[6] ? +m[6] : 0;
+  const ap = (m[7] || "").toUpperCase();
+  if (ap === "PM" && h < 12) h += 12;
+  if (ap === "AM" && h === 12) h = 0;
+  const dt = new Date(y, mo - 1, d, h, mi, se);
+  // round-trip: rejects 02/31/2026, which the Date constructor would roll over
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return NaN;
+  return dt.getTime();
+}
+
 // next-run problems only matter for an ENABLED task (Disabled legitimately shows N/A).
 function nextRunFlag(isDisabled, nextRaw) {
   if (isDisabled) return null;
   const s = (nextRaw || "").trim();
   if (s === "" || /^n\/a$/i.test(s)) return "next-run N/A (enabled)";
-  const t = Date.parse(s); // runtime clock compare — live logic, never baseline content
+  const t = parseSchtasksDate(s);
   // An UNPARSEABLE value used to fall through to `return null` — i.e. "healthy".
   // A clean "N/A" was flagged but a garbled one (encoding/locale corruption of
   // the captured field) reported the task as fine. Silence about a value we
@@ -83,7 +111,7 @@ function nextRunFlag(isDisabled, nextRaw) {
 // opts: { all:bool, like:string|null }
 function tasksFromCsv(csvText, opts) {
   const rows = parseCsv(csvText).filter((r) => r.length > 1);
-  if (!rows.length) return { tasks: [], missing: [] };
+  if (!rows.length) return { tasks: [], missing: [], dataRows: 0, malformed: 0 };
   const header = rows[0];
   const iName = colIndex(header, "TaskName");
   if (iName < 0) throw new Error("no 'TaskName' column — not a `schtasks /query /fo csv /v` capture?");
@@ -95,10 +123,18 @@ function tasksFromCsv(csvText, opts) {
 
   const get = (r, i) => (i >= 0 && i < r.length ? r[i] : "");
   const tasks = [];
+  // Rows the parser SAW, and rows whose field count did not match the header.
+  // Without these, an empty capture, an all-filtered capture and a genuinely
+  // healthy machine all printed the identical "clean - 0 flagged / 0 in scope",
+  // and a truncated row was absorbed as apparently-healthy. The tool already
+  // refuses to be silent about an unreadable Next-Run-Time; the same principle
+  // applies one level up, to a row it could not read at all.
+  let dataRows = 0, malformedRows = 0;
   for (let k = 1; k < rows.length; k++) {
     const r = rows[k];
+    dataRows++;
     const name = get(r, iName).trim();
-    if (!name || name.toLowerCase() === "taskname") continue; // skip repeated header rows
+    if (!name || name.toLowerCase() === "taskname") { dataRows--; continue; } // repeated header row
     if (!opts.all && /^\\microsoft\\/i.test(name)) continue; // default: hide OS tasks
     if (opts.like && !name.toLowerCase().includes(opts.like.toLowerCase())) continue;
     // schtasks emits some "Task To Run" commands with UNescaped commas (e.g. a
@@ -108,6 +144,7 @@ function tasksFromCsv(csvText, opts) {
     // not, so on a field-count mismatch we ignore it and read disabled from Status
     // (verified to report "Disabled" identically on well-formed rows).
     const malformed = r.length !== header.length;
+    if (malformed) malformedRows++;
     const status = get(r, iStatus).trim();
     const state = malformed ? "" : get(r, iState).trim();
     const disabled = /disabled/i.test(state) || /disabled/i.test(status);
@@ -120,7 +157,7 @@ function tasksFromCsv(csvText, opts) {
       run: get(r, iRun).trim(),
     });
   }
-  return { tasks };
+  return { tasks, dataRows, malformed: malformedRows };
 }
 
 function evaluate(t) {
@@ -134,14 +171,14 @@ function evaluate(t) {
 
 // Returns { rows:[{name,state,result,next,flags[]}], flaggedCount }.
 function auditCore(csvText, opts) {
-  const { tasks } = tasksFromCsv(csvText, opts);
+  const { tasks, dataRows, malformed } = tasksFromCsv(csvText, opts);
   let flaggedCount = 0;
   const rows = tasks.map((t) => {
     const flags = evaluate(t);
     if (flags.length) flaggedCount++;
     return { name: t.name, state: t.disabled ? "Disabled" : t.state, result: t.result || "-", next: t.next || "-", flags };
   });
-  return { rows, flaggedCount };
+  return { rows, flaggedCount, dataRows: dataRows || 0, malformed: malformed || 0 };
 }
 
 function printTable(rows) {
@@ -168,7 +205,12 @@ function cmdAudit(opts) {
   let csv;
   if (opts.fixture) {
     if (!fs.existsSync(opts.fixture)) { console.error(`error: fixture not found: ${opts.fixture}`); return 2; }
-    csv = fs.readFileSync(opts.fixture, "utf8");
+    // Wrapped: a DIRECTORY passed as --fixture threw an uncaught EISDIR and a
+    // raw Node stack trace, exiting 1 — which this tool's own contract table
+    // says means "flags found", not "crashed". The sibling cve-audit already
+    // wraps the equivalent read.
+    try { csv = fs.readFileSync(opts.fixture, "utf8"); }
+    catch (e) { console.error(`error: cannot read fixture ${opts.fixture}: ${e.code || e.message}`); return 2; }
   } else {
     const r = runQuery();
     if (r.error) { console.error("error: could not run schtasks (" + r.error.code + ") — Windows only, or schtasks not on PATH"); return 2; }
@@ -184,8 +226,30 @@ function cmdAudit(opts) {
     console.error(`\n${res.flaggedCount} flagged / ${res.rows.length} in scope (${scope})`);
     return 1;
   }
+  // 0 rows in scope is NOT a health report. A broken --like filter, a
+  // truncated capture and an all-Microsoft-filtered machine all produced the
+  // identical "clean" line as a genuinely healthy machine.
+  if (!res.rows.length) {
+    console.error(`\n0 tasks matched this scope (${scope}) — ${res.dataRows} data row(s) parsed. ` +
+      `This is NOT a health result: check the filter, or the capture.`);
+    return 2;
+  }
+  if (res.malformed) {
+    console.error(`\nclean — 0 flagged / ${res.rows.length} in scope (${scope}), but ` +
+      `${res.malformed} row(s) had a field count that did not match the header and ` +
+      `were read only on their leading columns.`);
+    return 0;
+  }
   console.log(`\nclean — 0 flagged / ${res.rows.length} in scope (${scope})`);
   return 0;
+}
+
+// cmdAudit wrapper that swallows stdout/stderr — the canary wants the exit code,
+// and a canary that prints its own fixtures buries the FAIL lines.
+function cmdAuditQuiet(opts) {
+  const log = console.log, err = console.error;
+  console.log = console.error = () => {};
+  try { return cmdAudit(opts); } finally { console.log = log; console.error = err; }
 }
 
 // PLAN MODE: build the /create line as TEXT. Never spawns anything.
@@ -286,6 +350,64 @@ function runCanary() {
     // plan mode PRINTS and returns 0 (and never spawns — see single runQuery site)
     check(cmdPlan({ name: "t", schedule: "DAILY@03:00", command: "run.bat" }) === 0, "plan valid -> 0");
     check(cmdPlan({ name: "t", schedule: "NOPE", command: "run.bat" }) === 2, "plan bad schedule -> 2");
+
+    // ---- 2026-08-20 audit ------------------------------------------------
+    // (a) an empty / header-only / all-filtered capture must NOT print the same
+    //     "clean" line as a healthy machine. All three used to be identical.
+    const emptyFx = path.join(root, "empty.csv");
+    fs.writeFileSync(emptyFx, '"TaskName","Next Run Time","Status","Last Result","Scheduled Task State","Task To Run"\n');
+    check(cmdAuditQuiet({ fixture: emptyFx, all: true, like: null }) === 2,
+      "a header-only capture is exit 2, not a clean report");
+    const msOnly = path.join(root, "msonly.csv");
+    fs.writeFileSync(msOnly,
+      '"TaskName","Next Run Time","Status","Last Result","Scheduled Task State","Task To Run"\n' +
+      '"\\Microsoft\\Windows\\Defrag","1/1/2099 3:00:00 AM","Ready","0","Enabled","defrag.exe"\n');
+    check(cmdAuditQuiet({ fixture: msOnly, all: false, like: null }) === 2,
+      "an all-filtered capture is exit 2, not a clean report");
+    check(cmdAuditQuiet({ fixture: msOnly, all: true, like: null }) === 0,
+      "...and the same capture with --all is a real clean result");
+    // a --like that matches nothing is the same class of non-answer
+    check(cmdAuditQuiet({ fixture: msOnly, all: true, like: "no-such-task" }) === 2,
+      "a --like matching nothing is exit 2, not clean");
+
+    // (b) a directory as --fixture is a usage error, not a stack trace
+    check(cmdAuditQuiet({ fixture: root, all: true, like: null }) === 2,
+      "a directory as --fixture is a clean exit 2");
+
+    // (c) a row whose field count does not match the header is SAID, not absorbed
+    const ragged = path.join(root, "ragged.csv");
+    fs.writeFileSync(ragged,
+      '"TaskName","Next Run Time","Status","Last Result","Scheduled Task State","Task To Run"\n' +
+      '"\\App\\good","1/1/2099 3:00:00 AM","Ready","0","Enabled","run.bat"\n' +
+      // schtasks emits some "Task To Run" commands with UNESCAPED commas, so
+      // the row gains fields and every column past it shifts. Quoting the whole
+      // command would NOT reproduce it — the whole point is that schtasks did
+      // not quote it.
+      '"\\App\\ragged","1/1/2099 3:00:00 AM","Ready","0","Enabled","ps -c mouse(1", " 2", " 3)"\n');
+    const raggedRes = auditCore(fs.readFileSync(ragged, "utf8"), { all: true, like: null });
+    check(raggedRes.malformed >= 1, `a ragged row is counted as malformed (got ${raggedRes.malformed})`);
+    check(raggedRes.rows.length === 2, "a ragged row is still reported, not dropped");
+
+    // (d) 2026-08-20 audit: the Next-Run-Time date is parsed EXPLICITLY as
+    //     M/D/YYYY. `Date.parse` on a bare "01/02/2026" is locale-dependent, so
+    //     on a non-US-locale host the same string reads as 1 Feb or 2 Jan and
+    //     the past/future verdict can invert. Days 13-31 were the LOUD half
+    //     (NaN, already flagged); days 1-12 were the silent half.
+    check(!Number.isNaN(parseSchtasksDate("1/2/2026 3:00:00 AM")), "M/D/Y with a time parses");
+    check(new Date(parseSchtasksDate("1/2/2026 3:00:00 AM")).getMonth() === 0,
+      "1/2/2026 is JANUARY 2nd (M/D), not 1 February");
+    check(new Date(parseSchtasksDate("12/31/2099 11:59:00 PM")).getFullYear() === 2099, "end-of-year parses");
+    check(new Date(parseSchtasksDate("1/2/2026 3:00:00 PM")).getHours() === 15, "PM is applied");
+    check(new Date(parseSchtasksDate("12/1/2026 12:30:00 AM")).getHours() === 0, "12 AM is midnight");
+    check(Number.isNaN(parseSchtasksDate("31/12/2026 3:00:00 AM")),
+      "a D/M/Y date is REFUSED rather than silently misread");
+    check(Number.isNaN(parseSchtasksDate("02/31/2026 3:00:00 AM")),
+      "an impossible day is refused, not rolled over into March");
+    check(Number.isNaN(parseSchtasksDate("N/A")), "N/A is not a date");
+    // ...and the refusal reaches the VERDICT, not just the parser
+    check(/unparseable/.test(nextRunFlag(false, "31/12/2026 3:00:00 AM") || ""),
+      "an unreadable next-run is flagged, never treated as healthy");
+    check(nextRunFlag(false, "12/31/2099 11:59:00 PM") === null, "a real future date is not flagged");
 
     // live smoke: real /query parses (>= 0 tasks) OR schtasks is unavailable
     const r = runQuery();

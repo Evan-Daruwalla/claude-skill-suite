@@ -70,6 +70,17 @@ function checkUtf8(buf) {
     for (let k = 1; k <= n; k++) {
       if ((buf[i + k] & 0xc0) !== 0x80) return { bom, valid: false, offset: i }; // bad continuation
     }
+    // The SECOND byte constrains the first for three lead ranges, and checking
+    // only the lead+continuation SHAPE let three classes of invalid UTF-8 pass
+    // as valid: overlong encodings (E0 80-9F, F0 80-8F), UTF-16 surrogates
+    // (ED A0-BF — the exact byte pattern a lone surrogate produces when naively
+    // encoded), and codepoints above U+10FFFF (F4 90-BF). Every one of them is
+    // rejected by a real JSON parser, which is what this check exists to predict.
+    const c1 = buf[i + 1];
+    if (b === 0xe0 && c1 < 0xa0) return { bom, valid: false, offset: i };  // overlong 3-byte
+    if (b === 0xed && c1 > 0x9f) return { bom, valid: false, offset: i };  // UTF-16 surrogate
+    if (b === 0xf0 && c1 < 0x90) return { bom, valid: false, offset: i };  // overlong 4-byte
+    if (b === 0xf4 && c1 > 0x8f) return { bom, valid: false, offset: i };  // > U+10FFFF
     i += n + 1;
   }
   return { bom, valid: true, offset: -1 };
@@ -86,18 +97,28 @@ function isPurelyNumeric(base) {
   return noExt.length > 0 && /^[0-9]+$/.test(noExt);
 }
 
-// enumerate files. In a git repo: `git ls-files` (respects .gitignore, tracked
-// only). Else: recursive walk skipping node_modules/.git. Returns paths RELATIVE
-// to root (forward-slash), which is what the case-collision + root checks want.
+// enumerate files. In a git repo: `git ls-files` for tracked AND untracked
+// files, still respecting .gitignore. Else: recursive walk skipping
+// node_modules/.git. Returns paths RELATIVE to root (forward-slash), which is
+// what the case-collision + root checks want.
 function listFiles(root) {
   // -c core.quotePath=false + -z: NUL-delimited, UNESCAPED UTF-8 paths. Without
   // this, git octal-escapes and double-quotes any non-ASCII name (e.g.
   // "caf\303\251.bat"), which mangles basename/extname — a non-ASCII-named
   // .bat/.json/.sh would be silently skipped by the content scan AND misfire a
   // false ROOT-SHADOW. Read raw bytes (no encoding) so multibyte names survive.
-  const g = spawnSync("git", ["-C", root, "-c", "core.quotePath=false", "ls-files", "-z"]);
+  //
+  // `--others --exclude-standard` is load-bearing. `ls-files` alone lists only
+  // TRACKED files, so a file you just wrote and have not staged was invisible —
+  // and the tool then printed `CLEAN — no path/file quirks found`, exit 0.
+  // Measured 2026-08-20: three planted defects (a non-ASCII .bat, a CRLF .sh, a
+  // numeric root file) left untracked in a real repo were ALL missed. That is
+  // exactly when someone runs this: write the file, check it, then stage.
+  // `--exclude-standard` keeps .gitignore honoured, so node_modules stays out.
+  const g = spawnSync("git", ["-C", root, "-c", "core.quotePath=false", "ls-files", "-z", "--cached", "--others", "--exclude-standard"]);
   if (g.status === 0) {
-    return g.stdout.toString("utf8").split("\0").filter(Boolean);
+    // --cached and --others can both list the same path in edge cases; dedupe.
+    return Array.from(new Set(g.stdout.toString("utf8").split("\0").filter(Boolean)));
   }
   const out = [];
   (function walk(dir, rel) {
@@ -225,9 +246,12 @@ function scanList(root, files) {
 }
 
 // ---- reporting -------------------------------------------------------------
-function report(root, findings) {
+function report(root, findings, scanned) {
   if (findings.length === 0) {
-    console.log(`CLEAN — no path/file quirks found in ${root}`);
+    // The count is the point: a CLEAN result with no denominator cannot be
+    // self-audited from its own output — "0 findings" and "0 files looked at"
+    // print identically, and proving traversal happened took a planted probe.
+    console.log(`CLEAN — 0 findings in ${scanned == null ? "?" : scanned} file(s) scanned under ${root}`);
     return 0;
   }
   // group by class for a readable sweep.
@@ -297,7 +321,61 @@ function runCanary() {
     fs.writeFileSync(path.join(good, "readme.txt"), "hello\n");
     const fg = scan(good);
     check(fg.length === 0, `clean dir yields zero findings (got ${fg.length}: ${fg.map((x) => x.cls + ":" + x.file).join(", ")})`);
-    check(report(good, fg) === 0, "report exits 0 on clean");
+    check(report(good, fg, listFiles(good).length) === 0, "report exits 0 on clean");
+
+    // ---- 2026-08-20 audit: untracked files must be scanned --------------
+    // Inside a git repo the enumeration was `git ls-files` — TRACKED ONLY — so
+    // a defect you just wrote and had not staged produced `CLEAN`, exit 0, at
+    // exactly the moment someone runs this tool.
+    const repo = path.join(root, "gitrepo");
+    fs.mkdirSync(repo, { recursive: true });
+    const g = (...a) => spawnSync("git", ["-C", repo].concat(a), { encoding: "utf8" });
+    g("init", "-q");
+    g("config", "user.email", "canary@example.invalid");
+    g("config", "user.name", "canary");
+    fs.writeFileSync(path.join(repo, "readme.txt"), "hello\n");
+    g("add", "-A");
+    g("commit", "-qm", "base");
+    check(scan(repo).length === 0, "a clean git repo is still clean");
+    // three defects, deliberately NEVER staged
+    fs.writeFileSync(path.join(repo, "build.bat"), Buffer.from("@echo off\nrem café\n", "utf8"));
+    fs.writeFileSync(path.join(repo, "deploy.sh"), "#!/bin/bash\r\necho hi\r\n");
+    fs.writeFileSync(path.join(repo, "12"), "x\n");
+    const fu = scan(repo);
+    check(fu.some((x) => x.cls === "BAT-NONASCII"), "an UNTRACKED non-ASCII .bat is found");
+    check(fu.some((x) => x.cls === "SH-CRLF"), "an UNTRACKED CRLF .sh is found");
+    check(fu.some((x) => x.cls === "ROOT-SHADOW" && x.file === "12"), "an UNTRACKED numeric root file is found");
+    // and .gitignore is still honoured, so this did not become a raw walk
+    fs.writeFileSync(path.join(repo, ".gitignore"), "ignored/\n");
+    fs.mkdirSync(path.join(repo, "ignored"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "ignored", "x.sh"), "#!/bin/sh\r\necho hi\r\n");
+    check(!scan(repo).some((x) => x.file.startsWith("ignored/")), ".gitignore is still honoured");
+
+    // a CLEAN result must state how many files it looked at
+    const cleanRepo = path.join(root, "cleanrepo");
+    fs.mkdirSync(cleanRepo, { recursive: true });
+    fs.writeFileSync(path.join(cleanRepo, "a.txt"), "x\n");
+    fs.writeFileSync(path.join(cleanRepo, "b.txt"), "y\n");
+    check(listFiles(cleanRepo).length === 2, "listFiles counts the files a CLEAN line reports");
+
+    // ---- 2026-08-20 audit: checkUtf8 validated SHAPE only ------------------
+    // Lead byte + continuation-byte shape is not enough: three classes of
+    // invalid UTF-8 have valid shape and are rejected by every real JSON parser,
+    // which is what this check exists to predict. Each is asserted against the
+    // exact byte sequence, and the VALID neighbour of each is asserted too so
+    // the tightened rule cannot be over-rejecting.
+    const u8 = (bytes) => checkUtf8(Buffer.from(bytes));
+    check(u8([0xed, 0xa0, 0x80]).valid === false, "a UTF-16 surrogate (ED A0 80) is invalid");
+    check(u8([0xed, 0x9f, 0xbf]).valid === true, "...but U+D7FF (ED 9F BF) is still valid");
+    check(u8([0xe0, 0x80, 0x80]).valid === false, "an overlong 3-byte form (E0 80 80) is invalid");
+    check(u8([0xe0, 0xa0, 0x80]).valid === true, "...but U+0800 (E0 A0 80) is still valid");
+    check(u8([0xf0, 0x80, 0x80, 0x80]).valid === false, "an overlong 4-byte form (F0 80 80 80) is invalid");
+    check(u8([0xf0, 0x90, 0x80, 0x80]).valid === true, "...but U+10000 (F0 90 80 80) is still valid");
+    check(u8([0xf4, 0x90, 0x80, 0x80]).valid === false, "a codepoint above U+10FFFF (F4 90 …) is invalid");
+    check(u8([0xf4, 0x8f, 0xbf, 0xbf]).valid === true, "...but U+10FFFF itself is still valid");
+    // ordinary text is unaffected
+    check(u8(Array.from(Buffer.from("café ✅ 🚀", "utf8"))).valid === true,
+      "ordinary UTF-8 text (accents, symbol, emoji) stays valid");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -339,7 +417,8 @@ function main() {
       console.error(`error: not a directory: ${root}`);
       process.exit(2);
     }
-    process.exit(report(root, scan(root)));
+    const files = listFiles(root);
+    process.exit(report(root, scanList(root, files), files.length));
   }
 
   console.error(`error: unknown command '${sub}'. Try --help.`);

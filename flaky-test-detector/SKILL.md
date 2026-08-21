@@ -95,5 +95,5 @@ Self-tests both directions in a throwaway temp dir: an alternating pass/fail
 subject (a script that flips its exit code via a state file) is caught as FLAKY
 at 4 runs, an always-pass subject stays quiet as STABLE-PASS, an always-fail
 subject is labeled STABLE-FAIL, `--keep-logs` writes one file per run, and the
-usage guards reject bad input. MUST print `CANARY PASS 11/11` before you trust a
+usage guards reject bad input. MUST print `CANARY PASS 15/15` before you trust a
 verdict.

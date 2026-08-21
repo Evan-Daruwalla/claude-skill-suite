@@ -5,8 +5,9 @@
  * golden-lock's job — freeze-over-time); this runs a thing N times in one shot
  * and fails if the runs disagree. Three checks:
  *
- *   --cmd "<c>" [--times N]        run N times (default 2), compare stdout + exit
- *                                  byte-exact across runs; first-divergence diff on fail
+ *   --cmd "<c>" [--times N]        run N times (default 2), compare stdout,
+ *                                  stderr AND exit byte-exact across runs;
+ *                                  first-divergence diff on fail
  *   --cmd "<c>" --files "a,b,c"    ALSO sha256 each listed file after every run and
  *                                  compare across runs (rebuild reproducibility)
  *   --cmd "<c>" --shuffle-stdin f  run twice: once feeding f as-is, once with its lines
@@ -14,7 +15,9 @@
  *                                  (order-independence). Seed = 0x9E3779B9 (SHUFFLE_SEED).
  *   --canary                       self-test (the done-check); both directions
  *
- * DEFAULT is byte-exact on stdout AND exit code. Nothing is written outside the
+ * DEFAULT is byte-exact on stdout, stderr AND exit code. stderr was added
+ * 2026-08-20: comparing stdout alone certified a command INVARIANT while its
+ * stderr changed on every run. Nothing is written outside the
  * canary's tmp dir — this only runs the command the caller names and reads the
  * files the caller lists.
  *
@@ -58,7 +61,8 @@ function shuffleLines(text) {
   return lines.join("\n") + (hadTrailing ? "\n" : "");
 }
 
-// run the command once, optionally feeding a stdin buffer. stdout captured as bytes.
+// run the command once, optionally feeding a stdin buffer. stdout AND stderr
+// captured as bytes.
 function runOnce(cmd, cwd, stdinBuf) {
   const opts = { shell: true, cwd, encoding: "buffer", maxBuffer: MAX_BUF };
   if (stdinBuf != null) opts.input = stdinBuf;
@@ -66,6 +70,14 @@ function runOnce(cmd, cwd, stdinBuf) {
   if (r.error) throw new Error("command failed to launch: " + r.error.message);
   return {
     stdout: r.stdout || Buffer.alloc(0),
+    // STDERR is compared too. Capturing stdout alone meant a command whose
+    // VARYING part goes to stderr — a run id, a timestamp, a progress line, any
+    // logger's default stream — was certified invariant. Measured 2026-08-20: a
+    // command emitting `console.error("run id: " + Math.random())` every run
+    // reported "INVARIANT: 3 runs identical", exit 0. For a tool whose whole
+    // output is a determinism verdict, that is the verdict being wrong in the
+    // one direction nobody re-checks.
+    stderr: r.stderr || Buffer.alloc(0),
     // signal-killed => status null; record as -1 so a crash is itself a divergence.
     exitCode: r.status == null ? -1 : r.status,
   };
@@ -100,9 +112,11 @@ function reportDivergence(label, ref, cur, refBuf, curBuf) {
   if (ref.exitCode !== cur.exitCode) {
     console.error(`  exit code: ${refBuf.label}=${ref.exitCode} vs ${curBuf.label}=${cur.exitCode}`);
   }
-  const d = firstDivergence(ref.stdout, cur.stdout);
+  // stdout first, then stderr — whichever diverged is the one reported.
+  const stream = ref.stdout.equals(cur.stdout) ? "stderr" : "stdout";
+  const d = firstDivergence(ref[stream], cur[stream]);
   if (d) {
-    console.error(`  first divergence at stdout line ${d.line}:`);
+    console.error(`  first divergence at ${stream} line ${d.line}:`);
     console.error(`    ${refBuf.label} - ${d.a === undefined ? "(no line)" : JSON.stringify(d.a)}`);
     console.error(`    ${curBuf.label} + ${d.b === undefined ? "(no line)" : JSON.stringify(d.b)}`);
   }
@@ -125,8 +139,9 @@ function cmdInvariance(cwd, cmd, times, files) {
     } catch (e) { console.error("error: " + e.message); return 2; }
 
     const stdoutSame = ref.stdout.equals(cur.stdout);
+    const stderrSame = ref.stderr.equals(cur.stderr);
     const exitSame = ref.exitCode === cur.exitCode;
-    if (!stdoutSame || !exitSame) {
+    if (!stdoutSame || !stderrSame || !exitSame) {
       reportDivergence(`run #1 vs run #${k}`, ref, cur, { label: "run#1" }, { label: `run#${k}` });
       return 1;
     }
@@ -151,7 +166,7 @@ function cmdInvariance(cwd, cmd, times, files) {
   if (ref.stdout.length === 0) notes.push("stdout empty");
   const note = notes.length ? ` — note: ${notes.join(", ")}` : "";
   if (note) console.error(`WARNING: reproducible but suspect${note}`);
-  console.log(`INVARIANT: ${times} runs identical (stdout + exit)${fx}${note}`);
+  console.log(`INVARIANT: ${times} runs identical (stdout + stderr + exit)${fx}${note}`);
   return 0;
 }
 
@@ -172,8 +187,9 @@ function cmdShuffle(cwd, cmd, stdinFile) {
   } catch (e) { console.error("error: " + e.message); return 2; }
 
   const stdoutSame = asIs.stdout.equals(shuf.stdout);
+  const stderrSame = asIs.stderr.equals(shuf.stderr);
   const exitSame = asIs.exitCode === shuf.exitCode;
-  if (stdoutSame && exitSame) {
+  if (stdoutSame && stderrSame && exitSame) {
     console.log(`INVARIANT: output order-independent (seed 0x${SHUFFLE_SEED.toString(16)})`);
     return 0;
   }
@@ -229,6 +245,25 @@ function runCanary() {
     fs.writeFileSync(badWriter,
       `require("fs").writeFileSync(${JSON.stringify(artifact)}, String(process.hrtime.bigint()));\n`);
     check(cmdInvariance(root, `node "${badWriter}"`, 2, [artifact]) === 1, "--files changing artifact -> VARYING caught");
+
+    // (g) 2026-08-20 audit: STDERR. Only stdout was compared, so a command whose
+    //     varying part goes to stderr — a run id, a timestamp, any logger's
+    //     default stream — was certified INVARIANT, exit 0.
+    const errVary = path.join(root, "errvary.js");
+    fs.writeFileSync(errVary,
+      'console.log("stable output");\nconsole.error("run id: " + Math.random());\n');
+    check(cmdInvariance(root, `node "${errVary}"`, 3) === 1,
+      "stdout stable + stderr VARYING -> caught");
+    // ...and a command whose stderr is stable is still INVARIANT, so the check
+    // is comparing stderr rather than simply refusing anything that writes to it.
+    const errStable = path.join(root, "errstable.js");
+    fs.writeFileSync(errStable,
+      'console.log("stable output");\nconsole.error("always the same warning");\n');
+    check(cmdInvariance(root, `node "${errStable}"`, 3) === 0,
+      "stdout stable + stderr stable -> still INVARIANT");
+    // the shuffle path compares stderr too
+    check(cmdShuffle(root, `node "${errVary}"`, stdinFile) === 1,
+      "shuffle path also compares stderr");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -247,8 +282,9 @@ Usage:
   node determinism-guard.js --canary
   node determinism-guard.js --help
 
-Default: run --cmd N times (N=2), compare stdout + exit code byte-exact across
-runs; first-divergence line diff on failure.
+Default: run --cmd N times (N=2), compare stdout, stderr AND exit code
+byte-exact across runs; first-divergence line diff on failure, naming which
+stream diverged.
 --files: ALSO sha256 each listed file after every run and compare (rebuild repro).
 --shuffle-stdin: run cmd twice — file as-is vs. its lines shuffled by a fixed-seed
   PRNG (seed 0x${SHUFFLE_SEED.toString(16)}) — and compare outputs (order-independence).

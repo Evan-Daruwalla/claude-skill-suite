@@ -101,4 +101,4 @@ IS flagged, a `random.seed()`ed file stays clean, unseeded `np.random` is flagge
 while `np.random.seed()`/`default_rng()` clear it, `Math.random()` is flagged in
 `.js` and `.ts`, and both `# seed-ok` / `// seed-ok` suppressions silence a line —
 plus end-to-end exit 1 (findings) vs. exit 0 (clean). MUST print
-`CANARY PASS 10/10` before you trust a scan.
+`CANARY PASS 16/16` before you trust a scan.

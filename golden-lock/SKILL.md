@@ -84,4 +84,4 @@ node golden-lock.js --canary
 
 Self-tests both directions in a throwaway temp dir — an unchanged output MATCHes
 AND a tampered one is caught (command stdout and file modes, plus name-traversal
-rejection). MUST print `CANARY PASS 8/8` before you trust a result.
+rejection). MUST print `CANARY PASS 28/28` before you trust a result.

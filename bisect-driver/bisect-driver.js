@@ -26,7 +26,11 @@
  * marked good/bad refs): the --good ref must exit 0 and --bad must exit 1-124,
  * else a broken repro would produce a silent false positive.
  *
- * Exit codes: 0 culprit found · 1 no culprit / bisect error · 2 usage / preflight.
+ * Exit codes: 0 culprit found · 1 no culprit / bisect error · 2 usage / preflight
+ * · 130 interrupted by a signal (NO result: an aborted search has not narrowed
+ * anything). SIGTERM on Windows is delivered by TerminateProcess and cannot be
+ * caught by any JS handler, so a `kill -TERM` can still leave bisect state
+ * active and HEAD detached; the next run refuses on that state and names the fix.
  * Zero dependencies, Node >=16. Read-only toward the world; only touches the
  * target repo's bisect state, which it always restores.
  */
@@ -34,14 +38,28 @@
 const { spawnSync } = require("child_process");
 
 // ---- helpers ---------------------------------------------------------------
+// A repro that never returns (infinite loop, a command waiting on stdin) used to
+// block the driver forever with the repo left on a historic checkout. spawnSync
+// blocks the event loop, so its own timeout is the only thing that can end it.
+const GIT_TIMEOUT_MS = 30 * 60 * 1000;
+
 // One git invocation. Args passed as an array (no outer shell) so nothing needs
-// quoting at the Node level. Returns { code, out } with out = stdout+stderr.
+// quoting at the Node level. Returns { code, out, signal } with out = stdout+stderr.
 function git(dir, args, allowFail) {
-  const r = spawnSync("git", args, { cwd: dir, encoding: "utf8", maxBuffer: 1 << 26 });
+  const r = spawnSync("git", args, { cwd: dir, encoding: "utf8", maxBuffer: 1 << 26, timeout: GIT_TIMEOUT_MS });
+  if (r.error && r.error.code === "ETIMEDOUT") {
+    throw new Error(`git ${args.join(" ")} exceeded the ${GIT_TIMEOUT_MS / 60000}-minute ceiling and was killed — does the repro command ever return?`);
+  }
   if (r.error) throw new Error(`git could not launch (${r.error.message}) — is git on PATH?`);
   const out = (r.stdout || "") + (r.stderr || "");
   if (!allowFail && r.status !== 0) throw new Error(`git ${args.join(" ")} failed:\n${out.trim()}`);
-  return { code: r.status == null ? -1 : r.status, out };
+  // `signal` is the only SYNCHRONOUS evidence that a child was interrupted
+  // rather than finished. A JS signal handler cannot help here: spawnSync blocks
+  // the event loop, so the handler does not run until after the main path has
+  // already parsed the output and printed a result. Measured 2026-08-20: a
+  // SIGINT mid-run printed `CULPRIT <commit 5>` for a defect planted at commit
+  // 4 — a specific, wrong, unhedged accusation — and then exited 130.
+  return { code: r.status == null ? -1 : r.status, out, signal: r.signal || null };
 }
 
 function isRepo(dir) {
@@ -81,13 +99,63 @@ function resolves(dir, ref) {
 // marked endpoints before starting, since git itself never re-tests them.
 function testRefExit(dir, ref, cmd) {
   git(dir, ["checkout", "-q", "--detach", ref + "^{commit}"]);
-  const r = spawnSync("sh", ["-c", cmd], { cwd: dir, encoding: "utf8", maxBuffer: 1 << 26 });
+  const r = spawnSync(shPath(), ["-c", cmd], { cwd: dir, encoding: "utf8", maxBuffer: 1 << 26 });
   if (r.error) throw new Error(`could not launch repro via sh -c (${r.error.message}) — is 'sh' on PATH? (Git for Windows ships it)`);
   return r.status == null ? -1 : r.status;
 }
 
+// `sh` is on PATH under Git Bash and NOT under PowerShell, which is this
+// machine's primary shell. `git bisect run` needs it, so the whole canary suite's
+// verdict depended on which shell launched it: 25/25 exit 0 from Git Bash,
+// 24/25 exit 1 from PowerShell, on identical files — and every tally ever
+// published was the Git Bash one. Resolve Git's own bundled sh.exe so the tool
+// works from either, and fail with a NAMED reason rather than a raw ENOENT if
+// neither is reachable.
+let _shCache;
+function shPath() {
+  if (_shCache !== undefined) return _shCache;
+  const probe = spawnSync("sh", ["-c", "exit 0"], { encoding: "utf8" });
+  if (!probe.error) return (_shCache = "sh");
+  const path = require("path"), fs = require("fs");
+  // `git --exec-path` -> <git>/mingw64/libexec/git-core; sh.exe lives at
+  // <git>/usr/bin/sh.exe. Derive it rather than hardcoding an install path.
+  const ep = spawnSync("git", ["--exec-path"], { encoding: "utf8" });
+  if (ep.status === 0 && ep.stdout) {
+    let d = ep.stdout.trim().replace(/\//g, path.sep);
+    for (let i = 0; i < 6 && d; i++) {
+      const cand = path.join(d, "usr", "bin", "sh.exe");
+      if (fs.existsSync(cand)) return (_shCache = cand);
+      const parent = path.dirname(d);
+      if (parent === d) break;
+      d = parent;
+    }
+  }
+  return (_shCache = "sh");   // let the caller's error message name the problem
+}
+
 function restoreHead(dir, orig) {
   git(dir, ["checkout", "-q", orig.branch || orig.sha], true);
+}
+
+// Re-test the answer. git bisect never re-checks the classifications it made,
+// so ONE bad classification anywhere in the search yields a confident, wrong,
+// unhedged culprit — and `git bisect run` still exits 0 with no signal and no
+// diagnostic. Measured 2026-08-20: a SIGINT during a run killed the repro's
+// `sleep`, that one commit was misclassified, and the driver reported commit 6
+// for a defect planted at commit 4. There is no synchronous evidence of the
+// interruption to check; the only thing that survives it is the CLAIM, so the
+// claim is what gets tested.
+//
+// A sound culprit satisfies both halves of what "first bad commit" means:
+// the culprit is bad, and its parent is good. Costs two more repro runs, the
+// same price the endpoint check already pays for the same reason.
+function verifyCulprit(dir, culprit, cmd) {
+  const parent = git(dir, ["rev-parse", "--verify", "--quiet", culprit + "^"], true).out.trim();
+  const culpritExit = testRefExit(dir, culprit, cmd);
+  const parentExit = parent ? testRefExit(dir, parent, cmd) : null;
+  const badOk = culpritExit >= 1 && culpritExit <= 124;
+  const goodOk = parent ? parentExit === 0 : true;
+  return { ok: badOk && goodOk, culpritExit, parent, parentExit, badOk, goodOk };
 }
 
 // ---- the operation ---------------------------------------------------------
@@ -106,6 +174,25 @@ function bisect(opts) {
   if (isDirty(dir)) return { code: 2, error: `working tree is dirty — commit, stash, or clean before bisecting (bisect checks out historic commits and would clobber uncommitted work)` };
 
   const orig = currentHead(dir);
+
+  // Signal handlers are registered HERE, not after endpoint verification.
+  // Endpoint verification runs the repro twice against historic checkouts, so a
+  // signal during it used to hit no custom handler at all and leave the repo on
+  // a detached HEAD — a wider window than the bisect run the old handler covered.
+  let interrupted = null;
+  const onSig = (sig) => {
+    interrupted = sig;
+    try { git(dir, ["bisect", "reset"], true); } catch (_) {}
+    try { restoreHead(dir, orig); } catch (_) {}
+    console.error(`\n${sig} received — bisect aborted, repo restored. NO result: an interrupted run has not narrowed anything.`);
+    process.exit(130);
+  };
+  process.on("SIGINT", onSig);
+  process.on("SIGTERM", onSig);
+  const clearSig = () => {
+    process.removeListener("SIGINT", onSig);
+    process.removeListener("SIGTERM", onSig);
+  };
 
   // --- endpoint verification (exit 2) ---
   // git bisect TRUSTS the marked --good/--bad refs and never re-tests them, so a
@@ -126,49 +213,87 @@ function bisect(opts) {
     ep = { goodExit, badExit };
   } catch (e) {
     try { restoreHead(dir, orig); } catch (_) {}
+    clearSig();
     return { code: 2, error: e.message };
   }
   try { restoreHead(dir, orig); } catch (_) {}
-  if (ep.goodExit !== 0)
-    return { code: 2, error: `--good ref '${opts.good}' does NOT pass the repro (exit ${ep.goodExit}; a good ref must exit 0). Your repro classifies the good endpoint as bad — git would trust it as good without testing, giving a false culprit. Fix the repro (does it work on a historic checkout?) or pick a genuinely-good ref.` };
-  if (ep.badExit === 0)
-    return { code: 2, error: `--bad ref '${bad}' PASSES the repro (exit 0; a bad ref must exit non-zero). Your repro doesn't reproduce the failure at the bad endpoint — git would trust it as bad without testing, and report the bad ref itself as the culprit. Fix the repro so it exits non-zero on the broken behavior, or pick a genuinely-broken ref.` };
-  if (ep.badExit < 1 || ep.badExit > 124)
-    return { code: 2, error: `--bad ref '${bad}' returned exit ${ep.badExit} (must be 1-124 to signal 'bad'; 125=skip, >=128=abort). Your repro doesn't cleanly classify the bad endpoint — fix it before bisecting.` };
+  if (ep.goodExit !== 0) { clearSig();
+    return { code: 2, error: `--good ref '${opts.good}' does NOT pass the repro (exit ${ep.goodExit}; a good ref must exit 0). Your repro classifies the good endpoint as bad — git would trust it as good without testing, giving a false culprit. Fix the repro (does it work on a historic checkout?) or pick a genuinely-good ref.` }; }
+  if (ep.badExit === 0) { clearSig();
+    return { code: 2, error: `--bad ref '${bad}' PASSES the repro (exit 0; a bad ref must exit non-zero). Your repro doesn't reproduce the failure at the bad endpoint — git would trust it as bad without testing, and report the bad ref itself as the culprit. Fix the repro so it exits non-zero on the broken behavior, or pick a genuinely-broken ref.` }; }
+  if (ep.badExit < 1 || ep.badExit > 124) { clearSig();
+    return { code: 2, error: `--bad ref '${bad}' returned exit ${ep.badExit} (must be 1-124 to signal 'bad'; 125=skip, >=128=abort). Your repro doesn't cleanly classify the bad endpoint — fix it before bisecting.` }; }
 
-  let culprit = null, err = null;
-  // best-effort cleanup if the process is interrupted mid-run.
-  const onSig = () => { try { git(dir, ["bisect", "reset"], true); } catch (_) {} process.exit(130); };
-  process.on("SIGINT", onSig);
-  process.on("SIGTERM", onSig);
+  let culprit = null, err = null, aborted = null;
   try {
     git(dir, ["bisect", "start"]);
     git(dir, ["bisect", "bad", bad]);
     git(dir, ["bisect", "good", opts.good]);
     // git drives the loop: checkout -> sh -c "<cmd>" -> classify by exit code.
-    const run = git(dir, ["bisect", "run", "sh", "-c", opts.cmd], true);
-    // git quotes the term in newer versions: 2.55 prints "is the first 'bad'
-    // commit", older prints "is the first bad commit". Accept both, or the
-    // driver silently never identifies a culprit.
-    const m = run.out.match(/([0-9a-f]{7,40}) is the first '?bad'? commit/);
-    if (m) culprit = git(dir, ["rev-parse", m[1]], true).out.trim() || m[1];
-    else err = `bisect did not identify a first bad commit — check the repro command classifies good/bad correctly:\n${run.out.trim().slice(-800)}`;
+    // shPath(), not the bare "sh" — same reason as testRefExit: under PowerShell
+    // there is no `sh` on PATH and git bisect run cannot classify anything.
+    const run = git(dir, ["bisect", "run", shPath(), "-c", opts.cmd], true);
+    // A signal reaches the whole process group, so `git bisect run` dies too and
+    // spawnSync returns a PARTIAL transcript. That transcript can still contain
+    // a "first bad commit" line from a search that never finished — measured
+    // 2026-08-20: an interrupted run named commit 5 for a defect at commit 4.
+    // The signal is checked BEFORE the parse, because there is no honest result
+    // to extract from an aborted search.
+    if (run.signal || interrupted) {
+      aborted = run.signal || interrupted;
+    } else {
+      // git quotes the term in newer versions: 2.55 prints "is the first 'bad'
+      // commit", older prints "is the first bad commit". Accept both, or the
+      // driver silently never identifies a culprit.
+      const m = run.out.match(/([0-9a-f]{7,40}) is the first '?bad'? commit/);
+      if (m) culprit = git(dir, ["rev-parse", m[1]], true).out.trim() || m[1];
+      else err = `bisect did not identify a first bad commit — check the repro command classifies good/bad correctly:\n${run.out.trim().slice(-800)}`;
+    }
   } catch (e) {
     err = e.message;
   } finally {
     try { git(dir, ["bisect", "reset"], true); } catch (_) {}
-    process.removeListener("SIGINT", onSig);
-    process.removeListener("SIGTERM", onSig);
+    clearSig();
+  }
+
+  // Re-test the claim before reporting it (see verifyCulprit). Runs after the
+  // bisect state is reset, on a clean tree, and always restores HEAD.
+  let ver = null;
+  if (culprit && !aborted) {
+    try {
+      ver = verifyCulprit(dir, culprit, opts.cmd);
+    } catch (e) {
+      ver = { ok: false, error: e.message };
+    }
+    try { restoreHead(dir, orig); } catch (_) {}
   }
 
   // verify we are back where we started (informational — reset should have done it).
   const now = currentHead(dir);
   const restored = now.sha === orig.sha && now.branch === orig.branch;
+  if (aborted) {
+    return { code: 130, aborted, restored,
+      error: `interrupted by ${aborted} — the bisect was aborted and the repo restored. NO culprit is reported: a search that did not finish has not narrowed anything, and the commit it was testing at the time is not an answer.` };
+  }
   if (err) return { code: 1, error: err, restored };
   if (!culprit) return { code: 1, error: "no culprit parsed", restored };
 
+  if (ver && !ver.ok) {
+    const why = ver.error
+      ? `the re-test could not run: ${ver.error}`
+      : [
+          ver.badOk ? null : `the culprit itself exits ${ver.culpritExit} (a bad commit must exit 1-124)`,
+          ver.goodOk ? null : `its parent ${String(ver.parent).slice(0, 12)} exits ${ver.parentExit} (the commit before the culprit must exit 0)`,
+        ].filter(Boolean).join("; ");
+    return {
+      code: 1, restored, culprit,
+      error: `bisect reported ${culprit.slice(0, 12)} but that answer does NOT hold up on re-test — ${why}.\n` +
+        `git never re-checks its own classifications, so a single bad one (an interrupted run, a flaky or nondeterministic repro, a build that failed at one commit) produces a confident wrong culprit at exit 0. Refusing to report it. Re-run on a quiet machine, or make the repro deterministic.`,
+    };
+  }
+
   const info = git(dir, ["show", "-s", "--format=%s%n%ai", culprit], true).out.trim().split("\n");
-  return { code: 0, culprit, subject: info[0] || "", authorDate: info[1] || "", restored };
+  return { code: 0, culprit, subject: info[0] || "", authorDate: info[1] || "", restored, verified: true };
 }
 
 // ---- canary: the self-test AND the done-check ------------------------------
@@ -250,6 +375,28 @@ function runCanary() {
     // git would trust the good ref as good and report a false culprit. Refused.
     const rbad = bisect({ dir: repo, good: goodSha, bad: "HEAD", cmd: "exit 1" });
     check(rbad.code === 2, "always-bad repro (--good fails) refused -> exit 2");
+
+    // ---- 2026-08-20 audit: the culprit re-test -----------------------------
+    // A SIGINT mid-run killed one repro invocation, that commit was
+    // misclassified, and `git bisect run` then finished NORMALLY (exit 0,
+    // signal null) reporting a commit two places past the real defect. Nothing
+    // synchronous distinguishes that from a good run — only re-testing the
+    // ANSWER does. These assert the check directly, because a real signal
+    // cannot be delivered deterministically from inside a self-test.
+    check(r.verified === true, "a clean run reports its culprit as re-tested");
+    const vTrue = verifyCulprit(repo, plantedSha, cmd);
+    check(vTrue.ok === true, "re-test accepts the true culprit (bad, parent good)");
+    // `before` (commit 8), NOT a fresh rev-parse of HEAD: verifyCulprit leaves
+    // HEAD detached at the parent it just tested, so reading HEAD here returns
+    // the previous probe's position and silently tests the wrong commit.
+    const vLate = verifyCulprit(repo, before, cmd);
+    check(vLate.ok === false && vLate.goodOk === false,
+      "re-test REJECTS a too-late culprit (its parent is already bad)");
+    const vEarly = verifyCulprit(repo, goodSha, cmd);            // commit 3, before the defect
+    check(vEarly.ok === false && vEarly.badOk === false,
+      "re-test REJECTS a too-early culprit (the commit itself still passes)");
+    g(["checkout", "-q", before]);
+    check(g(["rev-parse", "HEAD"]).stdout.trim() === before, "HEAD restored after the re-test probes");
   } finally {
     try { fs.rmSync(root, { recursive: true, force: true }); } catch (_) {}
   }
@@ -279,7 +426,8 @@ otherwise yield a silent false positive).
 The bisect state is ALWAYS reset afterward — your repo is left where it started.
 Bisect checks out historic commits DURING the run; commit or stash first.
 
-Exit codes: 0 culprit found · 1 no culprit / bisect error · 2 usage / preflight.`;
+Exit codes: 0 culprit found · 1 no culprit / bisect error · 2 usage / preflight
+· 130 interrupted by a signal (no result is reported for an aborted search).`;
 
 // A value-flag given without a value used to return null and fall back to a
 // default — for --dir that meant bisecting the SESSION CWD and printing a
@@ -311,6 +459,11 @@ function main() {
   });
 
   if (r.code === 2) { console.error("error: " + r.error); process.exit(2); }
+  if (r.code === 130) {
+    console.error("aborted: " + r.error);
+    if (r.restored === false) console.error("WARNING: repo may not be back on its original HEAD — run 'git bisect reset' and check 'git status'.");
+    process.exit(130);
+  }
   if (r.code === 1) {
     console.error("error: " + r.error);
     if (r.restored === false) console.error("WARNING: repo may not be back on its original HEAD — check 'git bisect reset' / 'git status'.");

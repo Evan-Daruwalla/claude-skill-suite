@@ -40,9 +40,19 @@ node experiment-log.js --canary
 - **log --no-run** records the same provenance without executing (exit code and
   duration are `null`) — useful to pin a manual or external run's inputs.
 - **show** pretty-prints entries oldest-first (newest last), one block per run.
-- `--in` / `--out` are comma-separated file lists. Default log file:
-  `experiments.jsonl` in cwd. A missing input/output is recorded as `(absent)`,
-  never faked.
+- `--in` / `--out` are comma-separated file lists, and are also **repeatable**
+  (`--in a.csv --in b.csv`). A comma inside a FILENAME is resolved by asking the
+  filesystem: if the whole value names a real file it is taken whole, otherwise
+  it splits. Before that, `--in "data,v2.csv"` recorded
+  `{"data":null,"v2.csv":null}` — the log asserting the declared input did not
+  exist while the real file hashed fine.
+- Default log file: `experiments.jsonl` in cwd. An **absent** input/output is
+  recorded as `null` and rendered `(absent)`; one that exists but could not be
+  read (EACCES, or EBUSY on a locked SQLite file) is recorded as
+  `"unreadable:<CODE>"`. Those are different facts and used to be the same one.
+  Nothing is ever faked.
+- `ts` is stamped when the entry is WRITTEN, i.e. AFTER the command finished.
+  `durationMs` gives you the other end.
 
 ### The case: a backtest with a frozen regression report
 
@@ -88,7 +98,15 @@ Register it in `~/.claude/settings.json`:
 
 Each line carries `ts`, `session_id`, `agent_id`, `agent_type`, `name`,
 `description`, `model`, `cwd`, `input_new`, `output_tokens`, `context_peak`,
-`tool_uses`, `turns`, `duration_ms`, `result_head`, and `finding`. **`finding`
+`tool_uses`, `turns`, `duration_ms`, `transcript`, `result_head`, and
+`finding`. **`transcript` says whether the numbers beside it are real**:
+`parsed` (they are), `absent`, `unreadable`, `no-usage`, or `none-declared`.
+Without it a missing transcript produced `input_new:0, output_tokens:0,
+turns:0` — byte-identical to a genuinely cheap run, and on one real dataset 38%
+of rows were all-zero while every one of them carried a `result_head`, so the
+agent demonstrably ran. Rows written before the column existed have no
+`transcript` key; treat an all-zero row without one as unknown cost, not free.
+**`finding`
 is always `null` — it is yours to fill in by hand.** That column is the point of
 the exercise: cost is measured automatically, value is not.
 
@@ -124,7 +142,7 @@ exact components are logged instead and any aggregate can be computed later.
 Don't "fix" this into a fitted number.
 
 The hook never blocks a turn: every failure path exits 0 silently. Verify with
-`node hooks/subagent-log.js --canary` — MUST print `CANARY PASS 17/17`.
+`node hooks/subagent-log.js --canary` — MUST print `CANARY PASS 26/26`.
 
 ## Windows notes
 
@@ -172,4 +190,4 @@ identical runs produce identical input/output hashes with every field present;
 and the log is proven append-only (earlier lines never rewritten). Hash
 correctness is pinned against a precomputed sha256 literal, so a broken/constant
 hash implementation fails the self-test rather than passing it circularly. MUST
-print `CANARY PASS 19/19` before you trust a result.
+print `CANARY PASS 57/57` before you trust a result.

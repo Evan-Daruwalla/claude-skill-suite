@@ -115,4 +115,4 @@ CAUGHT (a bad `.ps1` with `&&` + a ternary + an unencoded `Set-Content` yields
 exactly 3 findings; `??`, `?.`, `Read-Host`, bash-assign, and a bad `.sh` each
 caught) AND clean PS5.1-safe / POSIX code stays quiet (0 findings), plus the
 `# portability-ok` suppression and an end-to-end directory walk. MUST print
-`CANARY PASS 10/10` before you trust a result.
+`CANARY PASS 16/16` before you trust a result.

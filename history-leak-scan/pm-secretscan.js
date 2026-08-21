@@ -13,7 +13,7 @@
  */
 "use strict";
 const fs = require("fs");
-const { spawn } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 
 // ---- detectors -------------------------------------------------------------
 const RULES = [
@@ -43,7 +43,11 @@ const RULES = [
 // one flags and the other ignores is a hole with a reassuring shape. Added
 // 2026-08-15: key/jks/keystore/ppk, id_dsa, credentials*.json, secrets.*
 const SENSITIVE_FILE = /(^|\/)(\.env(\.[^\/]+)?|[^\/]+\.(pem|p12|pfx|key|jks|keystore|ppk)|id_(rsa|dsa|ed25519|ecdsa)(\.[^\/]+)?|[^\/]*_keys?\.env|credentials[^\/]*\.json|secrets\.[^\/]+)$/i;
-const FILE_EXEMPT = /example|sample|template|dummy|fixture/i;
+// `.dist`/`.sample` suffixes added 2026-08-20 to match local-secrets-manage's
+// EXEMPT_RE: `.env.dist` is a real Symfony convention for a COMMITTED template,
+// and the gate blocked it while the sibling auditor exempted it. Two halves of
+// one job disagreeing on a name is a hole with a reassuring shape either way.
+const FILE_EXEMPT = /example|sample|template|dummy|fixture|\.dist$|\.sample$/i;
 // git emits forward slashes in diff/name-only output on every platform, so this
 // is correct without pulling in `path` (and without path.win32 surprises).
 const basename = (f) => f.slice(f.lastIndexOf("/") + 1);
@@ -131,11 +135,19 @@ function scanRepo(repo, mode) {
     // any path marked `-diff` in .gitattributes. Without it, ONE line of
     // .gitattributes (`*.env -diff`) suppressed the diff body for real .env
     // files and every content rule silently no-opped on them.
+    // `diff HEAD` FAILS in a repo with no commits yet — and the FIRST commit of
+    // a new repo is exactly when a `.env` gets added. git exited non-zero, the
+    // gate read that as a scanner error, and the commit went through on a loud
+    // fail-open. With no HEAD, `--cached` describes the same thing `-a` would
+    // record, because every tracked file is new.
+    const noHead = spawnSync("git", ["-C", repo, "rev-parse", "--verify", "-q", "HEAD"], { encoding: "utf8" }).status !== 0;
     const args =
       mode === "staged"
         ? ["-C", repo, "diff", "--cached", "--no-color", "-U0", "--text"]
         : mode === "staged-all"
-        ? ["-C", repo, "diff", "HEAD", "--no-color", "-U0", "--text"]
+        ? (noHead
+            ? ["-C", repo, "diff", "--cached", "--no-color", "-U0", "--text"]
+            : ["-C", repo, "diff", "HEAD", "--no-color", "-U0", "--text"])
         : ["-C", repo, "log", "-p", "--all", "-m", "--no-color", "-U0", "--text"];
     const git = spawn("git", args);
     const findings = [];

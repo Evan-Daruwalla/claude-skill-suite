@@ -94,5 +94,5 @@ Self-tests both directions in a throwaway temp dir: a deterministic command read
 INVARIANT while an `hrtime()`-printing one is CAUGHT varying; a sort-then-print
 command is order-independent under `--shuffle-stdin` while a pass-through (`cat`)
 one is CAUGHT; and a fixed-bytes writer is reproducible under `--files` while a
-changing-bytes writer is CAUGHT. MUST print `CANARY PASS 6/6` before you trust a
+changing-bytes writer is CAUGHT. MUST print `CANARY PASS 9/9` before you trust a
 result.

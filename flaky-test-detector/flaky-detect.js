@@ -64,6 +64,22 @@ function pct(n, total) { return (100 * n / total).toFixed(0); }
 
 function writeLogs(dir, runs) {
   fs.mkdirSync(dir, { recursive: true });
+  // Clear this tool's OWN artefacts first. Without it, `--times 10` followed by
+  // `--times 3` into the same directory left run-04..run-10.log from the
+  // earlier session sitting beside the three fresh ones, indistinguishable from
+  // them, while the tool reported "3 files written" over a directory of ten.
+  // SKILL.md's own suggested workflow ("re-run and diff run-03.log") is exactly
+  // what triggers it. Only run-NN.log and meta.txt are removed — the directory
+  // may hold other things the caller put there.
+  let stale = 0;
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      if (name === "meta.txt" || /^run-\d+\.log$/.test(name)) {
+        fs.unlinkSync(path.join(dir, name));
+        stale++;
+      }
+    }
+  } catch (_) { /* surfaces on the write below, with its real error */ }
   // pad to the width of the run count, but never fewer than 2 digits, so the
   // files are run-01.log, run-02.log, … (matches the docs) and sort correctly.
   const pad = Math.max(2, String(runs.length).length);
@@ -85,6 +101,7 @@ function writeLogs(dir, runs) {
     meta.push(`  ${String(i + 1).padStart(3)}  ${String(r.exit).padStart(4)}  ${String(r.ms).padStart(6)}ms`);
   }
   fs.writeFileSync(path.join(dir, "meta.txt"), meta.join("\n") + "\n");
+  return stale;
 }
 
 // ---- report ----------------------------------------------------------------
@@ -128,7 +145,11 @@ function cmdRun(cwd, opts) {
   for (let i = 0; i < opts.times; i++) runs.push(runOnce(opts.cmd, cwd));
 
   if (opts.keepLogs) {
-    try { writeLogs(opts.keepLogs, runs); console.error(`logs: ${opts.times} files written to ${opts.keepLogs}`); }
+    try {
+      const stale = writeLogs(opts.keepLogs, runs);
+      console.error(`logs: ${opts.times} files written to ${opts.keepLogs}` +
+        (stale ? ` (${stale} file(s) from a previous run cleared first)` : ""));
+    }
     catch (e) { console.error("warning: could not write logs: " + e.message); }
   }
 
@@ -195,6 +216,21 @@ function runCanary() {
     const l1 = fs.readFileSync(path.join(logDir, "run-01.log"));
     const l2 = fs.readFileSync(path.join(logDir, "run-02.log"));
     check(l1.equals(l2), "identical passing output -> byte-identical run logs");
+
+    // (d2) 2026-08-20 audit: a SECOND run into the same directory must leave no
+    // logs from the first. 10-then-3 used to leave run-04..run-10 behind,
+    // indistinguishable from fresh output, while reporting "3 files written".
+    cmdRun(root, { cmd: passCmd, times: 10, keepLogs: logDir });
+    check(fs.readdirSync(logDir).filter((f) => /^run-\d+\.log$/.test(f)).length === 10,
+      "10 runs write 10 logs");
+    cmdRun(root, { cmd: passCmd, times: 3, keepLogs: logDir });
+    const after = fs.readdirSync(logDir).filter((f) => /^run-\d+\.log$/.test(f));
+    check(after.length === 3, `a 3-run re-run leaves exactly 3 logs (got ${after.length}: ${after.join(",")})`);
+    check(!fs.existsSync(path.join(logDir, "run-10.log")), "no stale run-10.log survives");
+    // and a file the caller put there is NOT collateral damage
+    fs.writeFileSync(path.join(logDir, "notes.txt"), "mine\n");
+    cmdRun(root, { cmd: passCmd, times: 2, keepLogs: logDir });
+    check(fs.existsSync(path.join(logDir, "notes.txt")), "an unrelated file in the log dir is left alone");
 
     // (e) usage guards.
     check(cmdRun(root, { cmd: null, times: 5 }) === 2, "missing --cmd -> usage exit 2");

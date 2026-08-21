@@ -31,17 +31,36 @@ const { spawnSync } = require("child_process");
 
 // Candidate-file NAME rules. Matched against each entry's basename only.
 // example/sample/template/fixture names are exempt (they carry no real secret).
+//
+// KEPT IN SYNC with pm-secretscan's SENSITIVE_FILE. The two skills document
+// themselves as two halves of one job ("run both"), and that sync was written
+// down as an invariant while NOTHING compared them. A differential test over 25
+// names on 2026-08-20 found 10 disagreements — every one a name the commit gate
+// BLOCKS and this pre-public auditor called clean: .p12 .pfx .jks .keystore
+// .ppk, id_dsa, id_ecdsa, and foo_key.env (singular "key"). The canary now
+// asserts the two rule sets agree on a fixed list, so the invariant is checked
+// rather than merely asserted.
 const NAME_RULES = [
   { re: /^\.env($|\.)/i, label: ".env*" },
   { re: /\.pem$/i, label: "*.pem" },
   { re: /\.key$/i, label: "*.key" },
+  { re: /\.p12$/i, label: "*.p12" },
+  { re: /\.pfx$/i, label: "*.pfx" },
+  { re: /\.jks$/i, label: "*.jks" },
+  { re: /\.keystore$/i, label: "*.keystore" },
+  { re: /\.ppk$/i, label: "*.ppk" },
   { re: /^id_rsa($|\.|_)/i, label: "id_rsa*" },
+  { re: /^id_dsa($|\.|_)/i, label: "id_dsa*" },
+  { re: /^id_ecdsa($|\.|_)/i, label: "id_ecdsa*" },
   { re: /^id_ed25519($|\.|_)/i, label: "id_ed25519*" },
-  { re: /_keys\.env$/i, label: "*_keys.env" },
+  { re: /_keys?\.env$/i, label: "*_key(s).env" },
   { re: /^credentials.*\.json$/i, label: "credentials*.json" },
   { re: /^secrets\./i, label: "secrets.*" },
 ];
-const EXEMPT_RE = /(example|sample|template|fixture|\.dist$|\.sample$)/i;
+// `dummy` matches pm-secretscan's FILE_EXEMPT, which already exempted it — the
+// reverse half of the same differential test (dummy.pem was flagged here and
+// exempt there).
+const EXEMPT_RE = /(example|sample|template|fixture|dummy|\.dist$|\.sample$)/i;
 const SKIP_DIRS = new Set([".git", "node_modules", ".venv", "venv", "__pycache__", ".next", "dist", "build"]);
 const MAX_FILES = 200000; // walk ceiling — a runaway tree stops rather than hangs
 
@@ -70,6 +89,11 @@ function classifyName(base) {
 function findCandidates(root) {
   const found = [];
   let count = 0;
+  // A ceiling hit used to `return found` silently, so a partial walk printed the
+  // identical "No secret-bearing files found by name. Clean." as a complete one.
+  // This tool's whole job is the sentence before a repo goes public; a partial
+  // scan wearing a clean result's clothes is the worst thing it can say.
+  found.truncated = false;
   const stack = [root];
   while (stack.length) {
     const dir = stack.pop();
@@ -77,7 +101,7 @@ function findCandidates(root) {
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
     catch { continue; } // unreadable dir — skip, don't crash
     for (const ent of entries) {
-      if (++count > MAX_FILES) return found;
+      if (++count > MAX_FILES) { found.truncated = true; return found; }
       const full = path.join(dir, ent.name);
       if (ent.isDirectory()) {
         if (!SKIP_DIRS.has(ent.name)) stack.push(full);
@@ -112,12 +136,15 @@ function verdictFor(root, rel) {
 
 // ---- audit -----------------------------------------------------------------
 function audit(root) {
-  const cands = findCandidates(root).sort();
-  return cands.map((rel) => ({
+  const cands = findCandidates(root);
+  const truncated = !!cands.truncated;
+  const rows = cands.slice().sort().map((rel) => ({
     path: rel,
     rule: classifyName(path.basename(rel)),
     verdict: verdictFor(root, rel),
   }));
+  rows.truncated = truncated;   // carried through so the report cannot lose it
+  return rows;
 }
 
 // proposed .gitignore lines for the risky rows — the exact path, so we never
@@ -130,7 +157,16 @@ function fixLines(rows) {
 function pad(s, n) { return s.length >= n ? s : s + " ".repeat(n - s.length); }
 
 function printTable(rows) {
-  if (!rows.length) { console.log("No secret-bearing files found by name. Clean."); return; }
+  if (rows.truncated) {
+    console.error(`PARTIAL SCAN — the ${MAX_FILES}-entry walk ceiling was reached; files past it were NOT examined.`);
+    console.error("  This is not a clean result. Narrow --dir, or add the large subtree to SKIP_DIRS.");
+  }
+  if (!rows.length) {
+    console.log(rows.truncated
+      ? "No secret-bearing files found in the part of the tree that was walked."
+      : "No secret-bearing files found by name. Clean.");
+    return;
+  }
   const vW = Math.max(7, ...rows.map((r) => r.verdict.length));
   const pW = Math.max(4, ...rows.map((r) => r.path.length));
   console.log(`${pad("VERDICT", vW)}  ${pad("PATH", pW)}  RULE`);
@@ -157,7 +193,10 @@ function cmdAudit(root, opts) {
       console.log("\n# nothing to add to .gitignore.");
     }
   }
-  return lines.length ? 1 : 0;
+  if (lines.length) return 1;
+  // A truncated walk must not exit 0: 0 means "I looked at everything and it is
+  // clean", and that is precisely what did not happen.
+  return rows.truncated ? 2 : 0;
 }
 
 // ---- canary: the self-test AND the done-check ------------------------------
@@ -219,6 +258,69 @@ function runCanary() {
     check(dirArgMissing(["--dir", "--fix-print"]) === true, "--dir --fix-print -> arg error");
     check(dirArgMissing(["--dir", "/some/path"]) === false, "--dir with path -> ok");
     check(dirArgMissing(["--fix-print"]) === false, "no --dir -> no arg error");
+
+    // ---- 2026-08-20 audit: the two rule sets must AGREE --------------------
+    // "Kept deliberately in sync with pm-secretscan" was written in both files
+    // and enforced by nothing. A 25-name differential found 10 disagreements,
+    // each one a name the commit gate BLOCKS and this auditor called clean.
+    // The invariant is now checked, on the shared scanner as it actually ships.
+    const SCANNER = path.join(os.homedir(), ".claude", "skills", "history-leak-scan", "pm-secretscan.js");
+    if (fs.existsSync(SCANNER)) {
+      const src = fs.readFileSync(SCANNER, "utf8");
+      const mSens = /const SENSITIVE_FILE = (\/.*\/i);/.exec(src);
+      const mExempt = /const FILE_EXEMPT = (\/.*\/i);/.exec(src);
+      check(!!mSens && !!mExempt, "pm-secretscan's rule constants are readable");
+      if (mSens && mExempt) {
+        // eslint-disable-next-line no-eval -- reading the sibling's own literals
+        const SENS = eval(mSens[1]), EXEMPT = eval(mExempt[1]);
+        const NAMES = [
+          ".env", ".env.local", ".env.dist", ".env.sample", "app.pem", "dummy.pem",
+          "client.p12", "cert.pfx", "store.jks", "my.keystore", "putty.ppk",
+          "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "alpaca_key.env",
+          "alpaca_keys.env", "credentials.json", "credentials-prod.json",
+          "secrets.yaml", "server.key", "readme.md", "package.json",
+          "example.pem", "config.template.env",
+        ];
+        const gateBlocks = (n) => SENS.test(n) && !EXEMPT.test(n);
+        const weFlag = (n) => NAME_RULES.some((r) => r.re.test(n)) && !EXEMPT_RE.test(n);
+        const disagree = NAMES.filter((n) => gateBlocks(n) !== weFlag(n));
+        check(disagree.length === 0,
+          `NAME_RULES and SENSITIVE_FILE agree on all ${NAMES.length} names` +
+          (disagree.length ? ` — DISAGREE on: ${disagree.join(", ")}` : ""));
+        // and prove the comparison can actually fail, so a green line means something
+        check(gateBlocks("id_rsa") === true && weFlag("id_rsa") === true, "both flag id_rsa");
+        check(gateBlocks("readme.md") === false && weFlag("readme.md") === false, "neither flags readme.md");
+        // the keystore/ecdsa/singular-key names the differential actually caught
+        for (const n of ["client.p12", "cert.pfx", "store.jks", "my.keystore", "putty.ppk",
+                         "id_dsa", "id_ecdsa", "alpaca_key.env"]) {
+          check(weFlag(n) === true, `local-secrets now flags ${n} (the gate always did)`);
+        }
+        check(gateBlocks(".env.dist") === false && weFlag(".env.dist") === false,
+          ".env.dist is exempt on BOTH sides (a committed template)");
+      }
+    } else {
+      console.error("  note: pm-secretscan not installed — rule-agreement check skipped");
+      check(true, "rule-agreement check (scanner absent — tolerated)");
+    }
+
+    // A walk that hit its ceiling must not print a clean result. The ceiling
+    // used to `return found` silently, so a partial scan and a complete one
+    // printed the identical "Clean." — in the tool whose entire job is the
+    // sentence you say before a repo goes public.
+    {
+      const partial = [];
+      partial.truncated = true;
+      const err = console.error, log = console.log;
+      let said = "";
+      console.error = console.log = (m) => { said += String(m) + "\n"; };
+      try { printTable(partial); } finally { console.error = err; console.log = log; }
+      check(/PARTIAL SCAN/.test(said), "a truncated walk says PARTIAL SCAN");
+      check(!/Clean\./.test(said), "a truncated walk never prints \"Clean.\"");
+      let saidOk = "";
+      console.error = console.log = (m) => { saidOk += String(m) + "\n"; };
+      try { printTable([]); } finally { console.error = err; console.log = log; }
+      check(/Clean\./.test(saidOk), "a COMPLETE empty walk still says Clean.");
+    }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

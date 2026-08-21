@@ -115,6 +115,7 @@ def check_orphans(conn):
     total = 0
     detail = []  # human-readable offenders, capped at MAX_OFFENDERS overall
     constraints = 0
+    unchecked = 0  # constraints whose offender query could not run at all
     for tbl in list_tables(conn):
         fks = conn.execute("PRAGMA foreign_key_list(%s)" % qid(tbl)).fetchall()
         # PRAGMA foreign_key_list columns:
@@ -149,35 +150,69 @@ def check_orphans(conn):
                 "p.%s = c.%s" % (qid(tc), qid(fc))
                 for fc, tc in zip(from_cols, to_cols)
             )
+            # `c.rowid` does not exist on a WITHOUT ROWID table, and the query
+            # then raised OperationalError into the handler below, which
+            # `continue`d WITHOUT incrementing total -- so the check reported
+            # [PASS] rows=0 over a real, planted orphan. The irony is exact:
+            # this check exists BECAUSE foreign_key_check returns rowid=None
+            # for that very table type, and it was the one type where it
+            # silently gave up. Identify offenders by the child's own PRIMARY
+            # KEY there instead.
+            child_key = _row_identifier(conn, tbl)
             sql = (
-                "SELECT c.rowid FROM {ct} c "
+                "SELECT {id} FROM {ct} c "
                 "WHERE {nn} AND NOT EXISTS ("
                 "  SELECT 1 FROM {pt} p WHERE {jn}"
                 ")"
-            ).format(ct=qid(tbl), nn=notnull, pt=qid(parent_tbl), jn=join)
+            ).format(id=child_key["expr"], ct=qid(tbl), nn=notnull,
+                     pt=qid(parent_tbl), jn=join)
             label_cols = "(%s)" % ",".join(from_cols)
             label_to = "(%s)" % ",".join(str(t) for t in to_cols)
             try:
                 offenders = conn.execute(sql).fetchall()
             except sqlite3.Error as e:
-                detail.append("%s.%s -> %s.%s: query error: %s"
+                # A constraint we could NOT check is not a constraint that
+                # passed. Mark it failed and say so, or "[PASS] rows=0" means
+                # two different things.
+                unchecked += 1
+                detail.append("%s.%s -> %s.%s: COULD NOT CHECK: %s"
                               % (tbl, label_cols, parent_tbl, label_to, e))
                 continue
             n = len(offenders)
             if n:
                 total += n
-                rowids = [str(o[0]) for o in offenders[:MAX_OFFENDERS]]
+                ids = [",".join(str(v) for v in o) for o in offenders[:MAX_OFFENDERS]]
                 detail.append(
-                    "%s.%s -> %s.%s: %d orphan(s), rowids [%s]"
-                    % (tbl, label_cols, parent_tbl, label_to, n, ", ".join(rowids))
+                    "%s.%s -> %s.%s: %d orphan(s), %s [%s]"
+                    % (tbl, label_cols, parent_tbl, label_to, n,
+                       child_key["label"], "; ".join(ids))
                 )
     return {
         "name": "orphan_detection",
-        "ok": total == 0,
+        "ok": total == 0 and unchecked == 0,
         "count": total,
         "detail": detail[:MAX_OFFENDERS],
         "constraints": constraints,
+        "unchecked": unchecked,
     }
+
+
+def _row_identifier(conn, table):
+    """How to name an offending row: rowid where it exists, else the PK.
+
+    A WITHOUT ROWID table has no `rowid` column at all, so selecting it raises
+    and (before 2026-08-20) turned a real orphan into a silent PASS.
+    """
+    try:
+        conn.execute("SELECT rowid FROM %s LIMIT 0" % qid(table))
+        return {"expr": "c.rowid", "label": "rowids"}
+    except sqlite3.Error:
+        pks = _parent_pk_cols(conn, table)
+        if pks:
+            return {"expr": ", ".join("c.%s" % qid(c) for c in pks),
+                    "label": "pk(%s)" % ",".join(pks)}
+        # No rowid and no PK: still detect the orphan, just count it namelessly.
+        return {"expr": "1", "label": "no row identifier available; count only"}
 
 
 def _parent_pk_cols(conn, table):
@@ -241,11 +276,20 @@ def audit(path):
         extra = ""
         if r["name"] == "orphan_detection":
             extra = " (%d FK constraint(s) scanned)" % r.get("constraints", 0)
+            if r.get("unchecked"):
+                extra += ", %d NOT CHECKED" % r["unchecked"]
         print("[%s] %-18s rows=%d%s" % (status, r["name"], r["count"], extra))
         if not r["ok"]:
             any_fail = True
             for line in r["detail"]:
                 print("       - " + line)
+        elif r["detail"]:
+            # A swallowed diagnostic on an otherwise-passing check used to be
+            # visible NOWHERE -- not stdout, not stderr. Silence about something
+            # we could not read is the same failure as the thing we could not
+            # read, so it prints either way.
+            for line in r["detail"]:
+                print("       - note: " + line)
     print("-" * 60)
     if any_fail:
         print("RESULT: FAIL")
@@ -360,6 +404,39 @@ def run_canary():
               "composite db: 1 FK constraint (grouped by fk id, not columns)")
         check(any("rowids [1]" in d for d in orph_c["detail"]),
               "composite db: offending rowid 1 surfaced")
+
+        # ---- WITHOUT ROWID child (2026-08-20 audit) ------------------------
+        # The offender query hardcoded `c.rowid`, which does not exist on a
+        # WITHOUT ROWID table. The resulting OperationalError was swallowed by a
+        # bare `except sqlite3.Error: continue` that never marked the check
+        # failed, so a real planted orphan came back as [PASS] rows=0 -- on
+        # exactly the table type this check exists to cover, because
+        # foreign_key_check returns rowid=None there.
+        wr = os.path.join(tmp, "without_rowid.db")
+        con = sqlite3.connect(wr)
+        con.execute("PRAGMA foreign_keys=OFF")
+        con.executescript(
+            "CREATE TABLE parent(id INTEGER PRIMARY KEY, name TEXT);"
+            "CREATE TABLE child(id TEXT PRIMARY KEY, parent_id INTEGER,"
+            "  FOREIGN KEY(parent_id) REFERENCES parent(id)) WITHOUT ROWID;"
+            "INSERT INTO parent(id,name) VALUES (1,'p1');"
+            "INSERT INTO child(id,parent_id) VALUES ('k1',1);"
+            "INSERT INTO child(id,parent_id) VALUES ('k9',999);"   # the orphan
+        )
+        con.commit()
+        con.close()
+        c = open_ro(wr)
+        orph_w = check_orphans(c)
+        c.close()
+        check(orph_w["ok"] is False,
+              "WITHOUT ROWID: the check FAILS instead of silently passing")
+        check(orph_w["count"] == 1,
+              "WITHOUT ROWID: exactly 1 orphan counted (got %d)" % orph_w["count"])
+        check(orph_w.get("unchecked", 0) == 0,
+              "WITHOUT ROWID: the constraint was actually checked, not skipped")
+        check(any("k9" in d for d in orph_w["detail"]),
+              "WITHOUT ROWID: the offender is named by its PRIMARY KEY, not a rowid")
+        check(audit_quiet(wr) == 1, "WITHOUT ROWID: audit() exits 1")
 
         # ---- read-only guard: a write against the ro handle must fail ----
         c = open_ro(good)

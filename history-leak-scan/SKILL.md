@@ -14,7 +14,7 @@ description: >-
 
 The engine is `pm-secretscan.js` (portable Node, zero deps). It streams
 `git log -p --all` (history) or `git diff --cached` (staged) and flags added
-lines against per-provider regexes (16 rules) + a sensitive-filename rule
+lines against per-provider regexes (17 rules) + a sensitive-filename rule
 (.env*, *.pem/.p12/.pfx, id_rsa*, *_keys.env — a file of that NAME should never
 be committed, whatever it contains; example/sample/template/fixture names
 exempt) + a generic high-entropy-assignment detector + a weak-password rule,

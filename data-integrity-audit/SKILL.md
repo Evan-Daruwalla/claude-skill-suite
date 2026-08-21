@@ -134,5 +134,5 @@ a **clean** one (asserts no orphans and exit 0); and a **composite-FK** one whos
 tuple orphan `(1,4)` has each column value present in the parent but not the
 combination (asserts the tuple orphan is caught, and that one composite constraint
 counts as ONE, not two). Also asserts the read-only handle rejects a write. Cleans
-up and prints `CANARY PASS 13/13` (exit 0) or `CANARY FAIL` (exit 1). Must pass
+up and prints `CANARY PASS 18/18` (exit 0) or `CANARY FAIL` (exit 1). Must pass
 before you trust a result.

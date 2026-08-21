@@ -46,7 +46,12 @@
 const fs = require('fs');
 const path = require('path');
 
-const LOG = path.join(process.env.USERPROFILE || process.env.HOME || __dirname, '.claude', 'agent-runs.jsonl');
+// os.homedir() before __dirname. With both env vars unset the old fallback
+// wrote the dataset into <hook-dir>/.claude/agent-runs.jsonl — inside the
+// version-controlled skill directory — splitting the log in two with no signal.
+// If there is no home at all, there is no correct place to write, so don't.
+const HOME_DIR = process.env.USERPROFILE || process.env.HOME || require('os').homedir() || '';
+const LOG = HOME_DIR ? path.join(HOME_DIR, '.claude', 'agent-runs.jsonl') : null;
 
 function parseTranscript(file) {
   const out = {
@@ -55,12 +60,20 @@ function parseTranscript(file) {
     context_peak: 0,    // MAX over turns of cache_read + cache_creation
     tool_uses: 0,
     turns: 0,
-    duration_ms: null
+    duration_ms: null,
+    // 'parsed' | 'absent' | 'unreadable' | 'no-usage'. Without this an
+    // unreadable transcript produced input_new:0, output_tokens:0, turns:0 —
+    // BYTE-IDENTICAL to a genuinely cheap run. Measured on the live dataset
+    // 2026-08-20: 120 of 314 rows (38%) were all-zero and ALL 120 carried a
+    // result_head, so the agent demonstrably ran. A cost dataset that silently
+    // records 38% of its runs as free is not a cost dataset.
+    transcript: 'parsed'
   };
   let lines;
   try {
     lines = fs.readFileSync(file, 'utf8').trim().split('\n');
-  } catch (_) {
+  } catch (e) {
+    out.transcript = (e && e.code === 'ENOENT') ? 'absent' : 'unreadable';
     return out;
   }
 
@@ -121,6 +134,11 @@ function parseTranscript(file) {
 
   for (const v of outById.values()) out.output_tokens += v;
 
+  // A transcript we could READ but that carried no usage at all is a third
+  // state: the file exists and parses, and still tells us nothing about cost.
+  // Left as 'parsed' it would be another silent zero.
+  if (out.turns === 0 && out.output_tokens === 0 && out.input_new === 0) out.transcript = 'no-usage';
+
   if (first !== null && last !== null) out.duration_ms = last - first;
   return out;
 }
@@ -137,7 +155,7 @@ function buildEntry(payload) {
   const tp = payload.agent_transcript_path || '';
   const meta = tp ? readMeta(tp) : {};
   const stats = tp ? parseTranscript(tp)
-    : { input_new: 0, output_tokens: 0, context_peak: 0, tool_uses: 0, turns: 0, duration_ms: null };
+    : { input_new: 0, output_tokens: 0, context_peak: 0, tool_uses: 0, turns: 0, duration_ms: null, transcript: 'none-declared' };
   const msg = payload.last_assistant_message;
 
   return {
@@ -158,7 +176,15 @@ function buildEntry(payload) {
     // transcript-derived: excludes spawn overhead, so slightly under the
     // harness-reported duration_ms
     duration_ms: stats.duration_ms,
-    result_head: typeof msg === 'string' ? msg.slice(0, 200) : null,
+    // WHY the numbers above are what they are. 'parsed' means they are real;
+    // anything else means the zeros are ignorance, not cheapness.
+    transcript: stats.transcript || 'parsed',
+    // Array.from, not slice: slice(0,200) cuts at a UTF-16 code UNIT, so an
+    // emoji landing on the boundary left a LONE SURROGATE in the line. Every
+    // downstream reader then died — Python json.dumps().encode('utf-8'),
+    // str.encode, and a UTF-8 csv write all raise "surrogates not allowed".
+    // One bad line breaks the whole dataset for those readers.
+    result_head: typeof msg === 'string' ? Array.from(msg).slice(0, 200).join('') : null,
     // for hand-annotation later: did this run catch something real?
     finding: null
   };
@@ -209,7 +235,16 @@ function canary() {
   t('agent_type falls back to meta', e.agent_type === 'general-purpose');
   t('result_head truncated to 200', e.result_head.length === 200);
   t('finding left null for annotation', e.finding === null);
-  t('every field present', Object.keys(e).length === 16);
+  // Named, not counted: `length === 16` told you a field was missing but never
+  // which one, and it silently accepted a rename.
+  const EXPECTED_KEYS = ['ts', 'session_id', 'agent_id', 'agent_type', 'name', 'description',
+    'model', 'cwd', 'input_new', 'output_tokens', 'context_peak', 'tool_uses', 'turns',
+    'duration_ms', 'transcript', 'result_head', 'finding'];
+  const missing = EXPECTED_KEYS.filter((k) => !(k in e));
+  const extra = Object.keys(e).filter((k) => EXPECTED_KEYS.indexOf(k) < 0);
+  t('every field present' + (missing.length ? ' (missing: ' + missing.join(',') + ')' : '') +
+    (extra.length ? ' (unexpected: ' + extra.join(',') + ')' : ''),
+    missing.length === 0 && extra.length === 0);
 
   // missing transcript must degrade, not throw
   const e2 = buildEntry({ agent_transcript_path: path.join(dir, 'nope.jsonl'), agent_id: 'a2' });
@@ -219,6 +254,31 @@ function canary() {
   fs.writeFileSync(bad, 'not json\n' + JSON.stringify({ type: 'assistant', message: { id: 'm9', usage: u1(20), content: [] } }) + '\n', 'utf8');
   t('malformed line skipped, valid line still counted', parseTranscript(bad).input_new === 110);
 
+  // ---- 2026-08-20 audit -------------------------------------------------
+  // (a) zeros must carry their REASON. 38% of the live dataset was all-zero
+  //     and indistinguishable from a cheap run.
+  t('a parsed transcript is labelled parsed', parseTranscript(tp).transcript === 'parsed');
+  t('an ABSENT transcript says so', parseTranscript(path.join(dir, 'nope.jsonl')).transcript === 'absent');
+  t('an absent transcript is not silently zero-cost', e2.transcript === 'absent');
+  const dirAsTranscript = parseTranscript(dir);            // EISDIR, not ENOENT
+  t('an UNREADABLE transcript is distinguished from an absent one',
+    dirAsTranscript.transcript === 'unreadable');
+  const emptyT = path.join(dir, 'empty.jsonl');
+  fs.writeFileSync(emptyT, '\n', 'utf8');
+  t('a readable transcript with no usage says no-usage', parseTranscript(emptyT).transcript === 'no-usage');
+  t('a run with no declared transcript says none-declared',
+    buildEntry({ agent_id: 'a3' }).transcript === 'none-declared');
+
+  // (b) result_head must never end in a lone surrogate — a single such line
+  //     makes the whole file unreadable to Python and to any UTF-8 csv writer.
+  const rocket = '\u{1F680}';
+  const e3 = buildEntry({ agent_id: 'a4', last_assistant_message: 'x'.repeat(199) + rocket + 'tail' });
+  const head = e3.result_head;
+  t('result_head cuts on characters, not code units', Array.from(head).length === 200);
+  t('result_head contains no lone surrogate',
+    !/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(head));
+  t('result_head survives a JSON round-trip intact', JSON.parse(JSON.stringify({ h: head })).h === head);
+
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
   console.log(fail === 0 ? `CANARY PASS ${pass}/${pass + fail}` : `CANARY FAIL ${pass}/${pass + fail}`);
   process.exit(fail === 0 ? 0 : 1);
@@ -227,14 +287,31 @@ function canary() {
 if (process.argv.includes('--canary')) {
   canary();
 } else {
-  let raw = '';
+  // Self-imposed deadline, under the harness's 5,000 ms hook budget. With stdin
+  // held open this process ran to 9,085 ms and only the harness ended it, which
+  // DROPS the entry — a run that cost real tokens vanishes from the cost
+  // dataset. Exiting on our own terms at 4 s keeps the failure visible as a
+  // missing line rather than a killed process. .unref() so the timer never
+  // holds the process open on the normal path.
+  setTimeout(() => process.exit(0), 4000).unref();
+
+  // Buffer chunks, do NOT concatenate as strings: `raw += chunk` decodes each
+  // 64 KiB Buffer independently, so a multi-byte character straddling the
+  // boundary is destroyed. Measured: U+1F680 starting at byte 65534 logged a
+  // cwd ending "���Q".
+  const chunks = [];
   // without this, an 'error' event on stdin is unhandled and exits non-zero
   // with a stack trace — the one path that could surface to the user
   process.stdin.on('error', () => process.exit(0));
-  process.stdin.on('data', (c) => (raw += c));
+  process.stdin.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
   process.stdin.on('end', () => {
     try {
-      const entry = buildEntry(JSON.parse(raw));
+      const raw = Buffer.concat(chunks).toString('utf8');
+      const payload = JSON.parse(raw);
+      // stdin `5` (a bare scalar) used to write a fully-null phantom row.
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) process.exit(0);
+      const entry = buildEntry(payload);
+      if (!LOG) process.exit(0);          // no home dir: nowhere correct to write
       fs.mkdirSync(path.dirname(LOG), { recursive: true });
       fs.appendFileSync(LOG, JSON.stringify(entry) + '\n', 'utf8');
     } catch (_) {

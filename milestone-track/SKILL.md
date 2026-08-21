@@ -94,5 +94,5 @@ Self-tests both directions on a bundled fixture (modeled on a typical PRD: a
 MILESTONES table whose rows merge with `### M...` headings by label, and one
 `~~struck~~` item). It asserts exact per-milestone counts, correct next-item
 detection, that struck items never inflate done/open, and that default (fork)
-scope genuinely differs from `--all`. MUST print `CANARY PASS 16/16` before you
+scope genuinely differs from `--all`. MUST print `CANARY PASS 28/28` before you
 trust a rollup.

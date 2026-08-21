@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 /*
- * commit-gate — PreToolUse hook (matcher: Bash).
+ * commit-gate — PreToolUse hook (matcher: Bash|PowerShell).
  *
- * Fires before every Bash tool call; no-ops unless the command is a `git commit`.
+ * Fires before every Bash OR PowerShell tool call; no-ops unless the command is
+ * a `git commit`. PowerShell was added 2026-08-20: the matcher had been `Bash`
+ * alone while real `git commit` calls existed in transcript history issued
+ * through the PowerShell tool — so in the repos with no native pre-commit hook,
+ * nothing gated those at all.
  * When it is, it runs the shared secret scanner over the STAGED diff and DENIES
  * the commit if a secret is found — so the model cannot commit a leaked key even
  * if it forgets the gate exists. The native git pre-commit hook covers commits
@@ -14,6 +18,7 @@
  */
 "use strict";
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
@@ -87,10 +92,28 @@ function usesCommitAll(clause) {
   return false;
 }
 
+// Git Bash's `/tmp` is a real directory this process can reach, so it is the one
+// MSYS root worth mapping rather than refusing. Everything else under `/` stays
+// null — a guess about where `/usr/local/x` lives on a Windows disk is worse
+// than an honest refusal.
+function mapMsysRoot(p) {
+  const m = /^\/tmp(\/.*)?$/.exec(p);
+  if (!m) return null;
+  const candidate = path.join(os.tmpdir(), (m[1] || "").replace(/^\//, ""));
+  return fs.existsSync(candidate) ? candidate : null;
+}
+
+// ONE helper, ONE null contract, used by BOTH the session-cwd site and the
+// -C/cd site. The first version of the /tmp fix mapped the root at the
+// session-cwd call site only, so `git -C /tmp/repo commit` and
+// `cd /tmp/repo && git commit` still fell open while a session cwd of
+// /tmp/repo denied — the same two-call-sites-disagreeing bug the audit found,
+// reintroduced one layer down. Measured: 17 passed / 4 failed under a /tmp
+// scratch dir vs 21/0 under C:/, on the identical 21 cases.
 function resolveRepoPath(cwd, p) {
   const drive = /^\/([A-Za-z])(\/.*)?$/.exec(p);
   if (drive) return drive[1].toUpperCase() + ":" + (drive[2] || "/");
-  if (p.startsWith("/")) return null;          // MSYS-root path we cannot map
+  if (p.startsWith("/")) return mapMsysRoot(p);   // null unless it is a real /tmp path
   return path.resolve(cwd, p);
 }
 
@@ -200,10 +223,73 @@ function main() {
   // `git commit --dry-run && git commit -m x` sailed through unscanned.
   // If NO clause is a real commit, every commit on this line is a dry run and
   // there is nothing to scan; otherwise the first real one governs.
-  const commitClause = cmd.split(CLAUSE_SEP).find(isRealCommit);
-  if (!commitClause) return allow();
+  const clausesAll = cmd.split(CLAUSE_SEP);
+  const commitClause = clausesAll.find(isRealCommit);
+  if (!commitClause) {
+    // A line that plainly commits but whose clauses this parser could not
+    // recognise must fail open LOUDLY. It used to return a bare allow() — the
+    // ONE silent fail-open left in the gate, and by far the widest: measured
+    // 2026-08-20 with a real AKIA key staged, every one of these SILENTLY
+    // allowed the commit, indistinguishable from a clean scan —
+    //
+    //   printf 'msg' | git commit -F -      (the standard multi-line idiom)
+    //   command / env / exec / nohup git commit
+    //   eval "git commit -m x"
+    //   { git commit -m x; }
+    //   if true; then git commit -m x; fi
+    //   for i in 1; do git commit -m x; done
+    //
+    // CLAUSE_SEP does not split on `|`, `do`, `then` or `{`, and startsWithGit
+    // requires the clause to BEGIN with git. Widening the parser to cover these
+    // is a treadmill — two gaps were closed this way in one week and each fix
+    // introduced another. Making the parse FAILURE loud is the root-cause fix:
+    // the gate still cannot scan, but it can no longer pretend it did.
+    //
+    // The genuine all-dry-run case stays silent, because there really is
+    // nothing to scan when every commit on the line writes nothing.
+    const anyCommitShape = clausesAll.some((c) => /\bgit\b/.test(c) && /\bcommit\b/.test(c));
+    const everyOneDryRun = clausesAll
+      .filter((c) => /\bgit\b/.test(c) && /\bcommit\b/.test(c))
+      .every(hasDryRunToken);
+    if (anyCommitShape && !everyOneDryRun) {
+      return allowWithWarning(
+        "commit-gate WARNING: this line commits but no clause could be parsed " +
+        "(pipeline, eval, brace/loop/conditional, or a wrapper command) — " +
+        "secret gate SKIPPED; this commit is UNSCANNED. Re-run the commit as a " +
+        "plain `cd <repo> && git commit ...` to get it scanned."
+      );
+    }
+    return allow();
+  }
 
-  const sessionCwd = (j && j.cwd) || process.cwd();
+  // j.cwd goes through the SAME normalization as a -C/cd path. It did not, so a
+  // session cwd spelled the MSYS way (/c/Users/... — what Git Bash reports, and
+  // what this gate's own canary passes as its scratch dir) reached git unmapped:
+  // git failed with "cannot change to '/c/...'", the scan errored, and the gate
+  // degraded to a loud fail-open. Measured 2026-08-20: with a /c/... scratch dir
+  // the gate's 12-case canary produced 4 DENY and 7 warns; with a C:/... one the
+  // same 12 cases produced 8 DENY. The gate's real coverage depended on how a
+  // path was SPELLED, and nothing said so.
+  const rawSessionCwd = (j && j.cwd) || process.cwd();
+  // `resolveRepoPath` returns null DELIBERATELY for an MSYS root it cannot map
+  // (`:93`). The first version of this fix wrote `|| rawSessionCwd`, which threw
+  // that signal away and handed git a path that does not exist — so a cwd of
+  // `/tmp/repo` produced `fatal: cannot change to '/tmp/repo'`, the scan errored,
+  // and the gate fell open, while the identical repo spelled `C:/...` denied.
+  // `targetRepo` honours the same null correctly via `cdUnparsed`; two call
+  // sites of one helper disagreeing about its null contract is the same bug
+  // class the helper was written to close.
+  //
+  // `/tmp` is mapped explicitly because Git Bash's /tmp is a REAL directory this
+  // process can reach; anything else unmappable is refused loudly rather than
+  // guessed at.
+  const sessionCwd = resolveRepoPath(rawSessionCwd, rawSessionCwd);
+  if (sessionCwd === null) {
+    return allowWithWarning(
+      `commit-gate WARNING: cannot map the session directory '${rawSessionCwd}' ` +
+      "to a path git can use — secret gate SKIPPED; this commit is UNSCANNED."
+    );
+  }
   const t = targetRepo(cmd, sessionCwd);
   if (t.unknown) {
     return allowWithWarning(
@@ -253,7 +339,7 @@ function main() {
 // self-test: plant a real staged secret, then assert the decision for each
 // command shape. These four regressions all shipped silently before 2026-08-05.
 function runCanary() {
-  const os = require("os");
+  // os is required at module scope
   const { execFileSync, spawnSync } = require("child_process");
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cg-canary-"));
   let clean = null;

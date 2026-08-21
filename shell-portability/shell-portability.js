@@ -143,6 +143,29 @@ function stripStrings(s) {
   return s.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
 }
 
+// Blank a TRAILING comment on a line that also carries real code. Only WHOLE-line
+// comments and quoted strings were masked, so every unanchored rule — `&&`/`||`,
+// `??`, `$env:` — fired on prose merely MENTIONING the trap:
+//   $x = 1  # note: && sometimes appears in older scripts   -> flagged chain-and-or
+//   export PATH=...  # not the same as $env:PATH            -> flagged ps-env-var
+// Both reproduced live, on .ps1 and on .sh. Over-firing is as fatal as
+// under-firing here: it trains you to ignore the tool.
+//
+// Quote-aware, because a `#` inside a string is not a comment
+// ("Set-Cookie: a#b"), with escapes honoured so `\#` or a backtick-escaped
+// quote cannot open or close a span.
+function stripTrailingComment(s) {
+  let inS = false, inD = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === "\\" || c === "`") { i++; continue; }        // escaped next char
+    if (c === "'" && !inD) { inS = !inS; continue; }
+    if (c === '"' && !inS) { inD = !inD; continue; }
+    if (c === "#" && !inS && !inD) return s.slice(0, i);
+  }
+  return s;
+}
+
 function scanContent(text, ext) {
   const isPs = PS_EXT.has(ext);
   const rules = isPs ? PS_RULES : SH_RULES;
@@ -150,7 +173,9 @@ function scanContent(text, ext) {
   for (const { line, text: lt } of logicalLines(text, isPs)) {
     if (lt.includes(SUPPRESS)) continue;      // trailing # portability-ok
     if (isFullLineComment(lt)) continue;       // whole-line comment
-    const st = stripStrings(lt);               // string-literal contents masked out
+    // trailing comment first, THEN string contents: a `#` inside a string is
+    // not a comment, and the trailing-comment scan is the one that knows that.
+    const st = stripStrings(stripTrailingComment(lt));
     for (const rule of rules) {
       if (rule.re.test(st)) {
         findings.push({ line, id: rule.id, why: rule.why, fix: rule.fix, snippet: snip(lt) });
@@ -269,6 +294,24 @@ function runCanary() {
     fs.writeFileSync(path.join(dir, "bad.ps1"), badPs);
     fs.writeFileSync(path.join(dir, "clean.sh"), cleanSh);
     check(cmdScanQuiet([dir]) === 1, "cmdScan over a dir with a bad file -> exit 1");
+
+    // ---- 2026-08-20 audit: TRAILING comments -----------------------------
+    // Only whole-line comments were masked, so prose merely MENTIONING a trap
+    // token fired every unanchored rule. Both cases below reproduced live.
+    check(scanContent('$x = 1  # note: && sometimes appears in old scripts', ".ps1").length === 0,
+      "a trailing .ps1 comment mentioning && is not flagged");
+    check(scanContent('export PATH=/usr/bin  # not the same as $env:PATH', ".sh").length === 0,
+      "a trailing .sh comment mentioning $env: is not flagged");
+    check(scanContent('$a = $b ?? $c  # the ?? here is real code', ".ps1").length === 1,
+      "real code before a trailing comment is STILL flagged");
+    // and a `#` inside a string is not a comment, so what follows it still scans
+    check(scanContent('$h = "Set-Cookie: a#b"; git pull && git push', ".ps1").length === 1,
+      "a # inside a string does not blind the rest of the line");
+    check(scanContent("$p = 'a#b'; $x = $y ?? $z", ".ps1").length === 1,
+      "a # inside single quotes does not blind the rest of the line");
+    // the existing suppression comment must keep working
+    check(scanContent("git pull && git push  # portability-ok", ".ps1").length === 0,
+      "# portability-ok still suppresses");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

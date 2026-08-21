@@ -67,8 +67,24 @@ want.txt` (0 when it still matches). Wrap a build that must pass first as
   clean first. "Dirty" includes untracked files.
 - **Refuses (exit 2) on an in-progress bisect** — run `git bisect reset` first.
 - **Always resets.** The bisect state is torn down in a `finally`, and best-effort
-  on Ctrl-C (SIGINT/SIGTERM), so an interrupted run still restores your HEAD. The
-  tool verifies HEAD is back where it started and warns if not.
+  on Ctrl-C (SIGINT), so an interrupted run still restores your HEAD. The tool
+  verifies HEAD is back where it started and warns if not.
+  - **SIGTERM on Windows is the exception, and it cannot be fixed in code.**
+    Windows delivers it via `TerminateProcess`, which gives no JS handler a
+    chance to run, so `kill -TERM` can leave bisect state active and HEAD
+    detached. The next run refuses on that state (exit 2) and tells you to run
+    `git bisect reset`. Use Ctrl-C, not `kill -TERM`.
+- **Re-tests its own answer before reporting it (exit 1 if it does not hold).**
+  `git bisect` never re-checks the classifications it made, so ONE bad
+  classification anywhere in the search produces a confident, wrong culprit —
+  and `git bisect run` still exits 0 with no warning. Measured 2026-08-20: a
+  Ctrl-C mid-run killed one repro invocation, that commit was misclassified,
+  and the driver reported a commit **two places past** the real defect with no
+  hedge. The driver now re-runs the repro on the reported culprit and its
+  parent: the culprit must fail, the parent must pass. If either half does not
+  hold, no culprit is reported. This also catches a flaky or nondeterministic
+  repro, and a commit where the build itself was broken. Cost: two extra repro
+  runs per bisect.
 - Read-only toward the world: it only mutates the target repo's transient bisect
   state, which it restores.
 - **Refuses (exit 2) when the repro misclassifies the endpoints.** `git bisect`
@@ -113,5 +129,5 @@ as exactly the planted commit and the repo is restored + bisect-state clean
 (good direction), AND a dirty tree, an in-progress bisect, an unresolvable ref,
 an always-good repro (bad endpoint passes), and an always-bad repro (good
 endpoint fails) are each refused with exit 2 (bad direction). Cleans up after
-itself. MUST print `CANARY PASS 11/11` before you trust a result. Never bisects
+itself. MUST print `CANARY PASS 16/16` before you trust a result. Never bisects
 a real repo.

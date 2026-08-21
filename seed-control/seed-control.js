@@ -25,16 +25,28 @@
 const fs = require("fs");
 const path = require("path");
 
-const EXTS = new Set([".py", ".js", ".ts"]);
+// .tsx/.jsx/.mjs/.cjs added 2026-08-20: they were outside the walk entirely, and
+// because the report's denominator counts only files it OPENED, five files each
+// containing Math.random() were reported as "1 finding in 1 file(s)" — the
+// truncation invisible from the output.
+const EXTS = new Set([".py", ".js", ".ts", ".tsx", ".jsx", ".mjs", ".cjs"]);
 const SKIP_DIRS = new Set(["node_modules", ".git", "__pycache__", ".venv", "venv", "dist", "build"]);
 
 // ---- detectors -------------------------------------------------------------
 // bare `random.<fn>(` — but not `.random.` (excludes np.random.*) and not a def.
 const PY_RANDOM_USE = /(^|[^.\w])random\.[A-Za-z_]\w*\s*\(/;
-const PY_RANDOM_SEED = /(^|[^.\w])random\.seed\s*\(/;
+// A SEED CALL MUST CARRY A SEED. `random.seed()` with no argument draws from OS
+// entropy and is non-reproducible BY DESIGN — the precise defect this tool
+// exists to find — and the old `\s*\(` matched it, so a file using it was
+// certified clean. Measured 2026-08-20: three files (`random.seed()`,
+// `np.random.seed()`, `np.random.default_rng()`) → "clean — no unseeded
+// randomness", exit 0, while bare `seed()` produced 0.5506… then 0.3473… on
+// consecutive runs. Requiring a non-space, non-`)` first character is the whole
+// fix: a seeded call always has one.
+const PY_RANDOM_SEED = /(^|[^.\w])random\.seed\s*\(\s*[^)\s]/;
 const PY_NP_USE = /\bnp\.random\.[A-Za-z_]\w*\s*\(/;
-const PY_NP_SEED = /\bnp\.random\.seed\s*\(/;
-const PY_NP_RNG = /\bnp\.random\.default_rng\s*\(|\bdefault_rng\s*\(/;
+const PY_NP_SEED = /\bnp\.random\.seed\s*\(\s*[^)\s]/;
+const PY_NP_RNG = /\bnp\.random\.default_rng\s*\(\s*[^)\s]|\bdefault_rng\s*\(\s*[^)\s]/;
 const JS_MATH_RANDOM = /\bMath\.random\s*\(/;
 
 const PY_SEED_OK = /#\s*seed-ok\b/;
@@ -107,14 +119,33 @@ function cmdScan(targets) {
   for (const t of targets) collect(path.resolve(t), files);
   if (!files.length) { console.error("error: no .py/.js/.ts files under given path(s)"); return 2; }
   let total = 0;
+  let unread = 0;
   for (const f of files.sort()) {
-    const { findings } = scanFile(f);
+    // `error` was set by scanFile and consulted by NOTHING: a file that became
+    // unreadable after the directory walk had already stat'd it dropped out of
+    // the report with zero trace, not even on stderr. A file we could not read
+    // is not a file we cleared.
+    const { findings, error } = scanFile(f);
+    if (error) {
+      console.error(`  COULD NOT READ ${f}: ${error}`);
+      unread++;
+      continue;
+    }
     for (const fd of findings) {
       console.log(`${fd.file}:${fd.line}:${fd.snippet}`);
       total++;
     }
   }
-  if (total) { console.error(`\n${total} unseeded-randomness finding(s) in ${files.length} file(s). Seed the PRNG or add a seed-ok comment.`); return 1; }
+  if (total) {
+    console.error(`\n${total} unseeded-randomness finding(s) in ${files.length} file(s)` +
+      (unread ? `, ${unread} NOT scanned (unreadable)` : "") +
+      ". Seed the PRNG or add a seed-ok comment.");
+    return 1;
+  }
+  if (unread) {
+    console.error(`\n0 findings, but ${unread} of ${files.length} file(s) could NOT be read — this is not a clean result.`);
+    return 1;
+  }
   console.log(`clean — no unseeded randomness in ${files.length} file(s)`);
   return 0;
 }
@@ -162,6 +193,38 @@ function runCanary() {
     try {
       fs.writeFileSync(path.join(cleanDir, "ok.py"), "import random\nrandom.seed(1)\nx = random.random()\n");
       check(cmdScanQuiet([cleanDir]) === 0, "scan clean dir -> exit 0");
+
+      // ---- 2026-08-20 audit: a seed call must CARRY a seed ----------------
+      // `random.seed()` with no argument draws from OS entropy — the exact
+      // non-reproducibility this tool exists to find — and the old regex
+      // accepted it, certifying the file clean.
+      const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), "seed-control-bare-"));
+      try {
+        fs.writeFileSync(path.join(bareDir, "a.py"), "import random\nrandom.seed()\nx = random.random()\n");
+        check(scanFile(path.join(bareDir, "a.py")).findings.length > 0,
+          "a bare random.seed() does NOT vouch for the file");
+        fs.writeFileSync(path.join(bareDir, "b.py"), "import numpy as np\nnp.random.seed()\ny = np.random.rand()\n");
+        check(scanFile(path.join(bareDir, "b.py")).findings.length > 0,
+          "a bare np.random.seed() does NOT vouch for the file");
+        fs.writeFileSync(path.join(bareDir, "c.py"), "import numpy as np\nrng = np.random.default_rng()\nz = rng.random()\n");
+        check(scanFile(path.join(bareDir, "c.py")).findings.length > 0,
+          "a bare default_rng() does NOT vouch for the file");
+        // ...and a REAL seed still does, or the fix is just refusing everything
+        fs.writeFileSync(path.join(bareDir, "d.py"), "import random\nrandom.seed(1234)\nx = random.random()\n");
+        check(scanFile(path.join(bareDir, "d.py")).findings.length === 0,
+          "random.seed(1234) still vouches for the file");
+        fs.writeFileSync(path.join(bareDir, "e.py"), "import numpy as np\nrng = np.random.default_rng(7)\nz = rng.random()\n");
+        check(scanFile(path.join(bareDir, "e.py")).findings.length === 0,
+          "default_rng(7) still vouches for the file");
+        // extensions that were outside the walk entirely
+        for (const ext of ["tsx", "jsx", "mjs", "cjs"]) {
+          fs.writeFileSync(path.join(bareDir, `f.${ext}`), "export const r = Math.random();\n");
+        }
+        const walked = [];
+        collect(bareDir, walked);
+        check(walked.filter((f) => /\.(tsx|jsx|mjs|cjs)$/.test(f)).length === 4,
+          "the walk now reaches .tsx/.jsx/.mjs/.cjs");
+      } finally { fs.rmSync(bareDir, { recursive: true, force: true }); }
     } finally { fs.rmSync(cleanDir, { recursive: true, force: true }); }
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

@@ -4,10 +4,15 @@
 A copy that ran is not a copy that landed; this asserts the target equals the
 source, deterministically and order-independently:
   1. ROW COUNT: src count == dst count.
-  2. CONTENT CHECKSUM: serialize each row's selected columns as tab-joined UTF-8,
-     sha256 each row, XOR-combine every row hash. XOR is order-independent by
-     construction, so a re-sorted rebuild still matches. Default columns = the
-     columns common to both endpoints (sorted); override with --cols.
+  2. CONTENT CHECKSUM: serialize each row's selected columns as tab-joined UTF-8
+     and sha256 each row, then combine the row hashes TWO ways — both must match:
+       - XOR of every row hash: order-independent by construction, O(1) memory.
+       - sha256 over the SORTED list of row hashes: order-independent too, but
+         multiplicity-sensitive. XOR alone cancels any row appearing an even
+         number of times, so two endpoints could share a row count and an XOR
+         while sharing almost no rows (audit 2026-08-20: PASS on a copy holding
+         1 of 3 source rows). The row count does not cover that case.
+     Default columns = the columns common to both endpoints (sorted); --cols overrides.
   3. --key <col> (optional): list key values present in src but missing from dst
      (first 10) — turns a bare count/checksum mismatch into named rows.
 
@@ -37,7 +42,7 @@ from typing import NamedTuple
 # ---- endpoint parsing ------------------------------------------------------
 # An endpoint is ("csv", path, None) or ("sqlite", db_path, table). The sqlite
 # form is split from the RIGHT once so a Windows drive letter (D:\...) survives:
-# "sqlite:D:\var\app.db:events" -> db="D:\var\app.db" table="events".
+# "sqlite:D:\var\trades.db:price_cache" -> db="D:\var\trades.db" table="price_cache".
 def parse_endpoint(spec: str, which: str) -> tuple[str, str, str | None]:
     if spec.startswith("csv:"):
         path = spec[4:]
@@ -111,6 +116,22 @@ def scan(ep: tuple[str, str, str | None], cols: list[str], key: str | None):
     keys: set | None = set() if key else None
     kind, a, b = ep
 
+    # XOR is order-independent, which is the property this tool needs — and it is
+    # ALSO multiplicity-blind, which the row count does NOT cover. A row hash
+    # XORed twice cancels to zero, so any row appearing an even number of times
+    # is invisible. Measured 2026-08-20:
+    #   src = [login/alice, login/alice, logout/bob]
+    #   dst = [logout/bob, purchase/mallory, purchase/mallory]
+    # -> count 3 = 3 MATCH, checksum 0d729282de28 = 0d729282de28 MATCH,
+    #    RESULT: PASS, exit 0 -- on a copy sharing exactly ONE of three rows.
+    # For a tool whose one job is "prove every row moved", a confident PASS over
+    # a destroyed transfer is the worst failure available to it.
+    #
+    # A sorted-multiset digest is order-independent AND multiplicity-sensitive.
+    # Both are computed and both must match. The XOR is kept because it is O(1)
+    # in memory and still the right primitive for the streaming case.
+    row_hashes: list[bytes] = []
+
     def fold(rowdict):
         nonlocal count
         count += 1
@@ -118,6 +139,7 @@ def scan(ep: tuple[str, str, str | None], cols: list[str], key: str | None):
         d = hashlib.sha256(joined.encode("utf-8")).digest()
         for i in range(32):
             acc[i] ^= d[i]
+        row_hashes.append(d)
         if keys is not None:
             keys.add(norm_val(rowdict[key]))
 
@@ -133,7 +155,12 @@ def scan(ep: tuple[str, str, str | None], cols: list[str], key: str | None):
                 fold(row)
         finally:
             con.close()
-    return count, bytes(acc), keys
+    # sorted, then hashed: order-independent like the XOR, but a row present
+    # twice on one side and not the other changes the digest.
+    ms = hashlib.sha256()
+    for d in sorted(row_hashes):
+        ms.update(d)
+    return count, bytes(acc), keys, ms.digest()
 
 
 class Result(NamedTuple):
@@ -142,6 +169,8 @@ class Result(NamedTuple):
     dst_count: int
     src_sum: bytes
     dst_sum: bytes
+    src_ms: bytes    # sorted-multiset digest: catches duplicate-row cancellation
+    dst_ms: bytes
     missing: list[str] | None  # src keys absent from dst (capped), or None if no --key
     missing_total: int
 
@@ -151,7 +180,9 @@ class Result(NamedTuple):
 
     @property
     def sum_ok(self) -> bool:
-        return self.src_sum == self.dst_sum
+        # BOTH digests. XOR alone cancels a row that appears an even number
+        # of times, so it PASSED a copy sharing 1 of 3 rows (audit 2026-08-20).
+        return self.src_sum == self.dst_sum and self.src_ms == self.dst_ms
 
     @property
     def ok(self) -> bool:
@@ -180,8 +211,8 @@ def compare(src_ep, dst_ep, cols_arg: str | None, key: str | None) -> Result:
         if key not in dst_cols:
             raise ValueError(f"--key: '{key}' not in dst columns {dst_cols}")
 
-    src_count, src_sum, src_keys = scan(src_ep, cols, key)
-    dst_count, dst_sum, dst_keys = scan(dst_ep, cols, key)
+    src_count, src_sum, src_keys, src_ms = scan(src_ep, cols, key)
+    dst_count, dst_sum, dst_keys, dst_ms = scan(dst_ep, cols, key)
 
     missing = None
     missing_total = 0
@@ -189,7 +220,8 @@ def compare(src_ep, dst_ep, cols_arg: str | None, key: str | None) -> Result:
         miss = sorted(src_keys - dst_keys)  # type: ignore[operator]
         missing_total = len(miss)
         missing = miss[:10]
-    return Result(cols, src_count, dst_count, src_sum, dst_sum, missing, missing_total)
+    return Result(cols, src_count, dst_count, src_sum, dst_sum, src_ms, dst_ms,
+                  missing, missing_total)
 
 
 def print_result(src_spec: str, dst_spec: str, r: Result, key: str | None) -> None:
@@ -199,8 +231,17 @@ def print_result(src_spec: str, dst_spec: str, r: Result, key: str | None) -> No
     print(f"  cols compared ({len(r.cols)}): {', '.join(r.cols)}")
     print(f"  row count:  src={r.src_count}  dst={r.dst_count}  "
           f"{'MATCH' if r.count_ok else 'MISMATCH'}")
+    xor_ok = r.src_sum == r.dst_sum
+    ms_ok = r.src_ms == r.dst_ms
     print(f"  checksum:   src={r.src_sum[:6].hex()}  dst={r.dst_sum[:6].hex()}  "
-          f"{'MATCH' if r.sum_ok else 'MISMATCH'}")
+          f"{'MATCH' if xor_ok else 'MISMATCH'}")
+    print(f"  multiset:   src={r.src_ms[:6].hex()}  dst={r.dst_ms[:6].hex()}  "
+          f"{'MATCH' if ms_ok else 'MISMATCH'}")
+    if xor_ok and not ms_ok:
+        # Name the mechanism, because this is the case the XOR alone called PASS.
+        print("              ^ the XOR agrees but the multiset does not: rows differ "
+              "in MULTIPLICITY (a row present an even number of times cancels out "
+              "of an XOR). Use --key to name them.")
     if key is not None:
         if r.missing_total:
             shown = ", ".join(r.missing or [])
@@ -280,6 +321,33 @@ def run_canary() -> int:
         con.close()
         r3 = compare(src, dst, None, "id")
         check(r3.ok and r3.sum_ok, "re-ordered copy still MATCHes (XOR order-independent)")
+
+        # (c2) 2026-08-20 audit: DUPLICATE-ROW CANCELLATION.
+        # A row hash XORed twice cancels to zero, so two endpoints can share the
+        # same row count AND the same XOR while sharing almost no rows. Measured
+        # before the fix: src=[login/alice x2, logout/bob], dst=[logout/bob,
+        # purchase/mallory x2] -> count 3=3 MATCH, checksum MATCH, RESULT: PASS,
+        # exit 0, on a copy that lost 2 of 3 rows. The row count does not cover
+        # this, despite the docstring implying it does.
+        dup_src = os.path.join(root, "dup_src.csv")
+        dup_dst = os.path.join(root, "dup_dst.csv")
+        with open(dup_src, "w", encoding="utf-8", newline="") as fh:
+            fh.write("id,name,val\n1,login,alice\n1,login,alice\n2,logout,bob\n")
+        with open(dup_dst, "w", encoding="utf-8", newline="") as fh:
+            fh.write("id,name,val\n2,logout,bob\n3,purchase,mallory\n3,purchase,mallory\n")
+        rdup = compare(("csv", dup_src, None), ("csv", dup_dst, None), None, None)
+        check(rdup.count_ok, "duplicate case: row counts DO match (3 vs 3)")
+        check(rdup.src_sum == rdup.dst_sum, "duplicate case: the XOR alone still agrees")
+        check(rdup.src_ms != rdup.dst_ms, "duplicate case: the MULTISET digest disagrees")
+        check(not rdup.sum_ok, "duplicate case: sum_ok is False (both digests required)")
+        check(not rdup.ok, "duplicate case: overall FAIL, not PASS")
+        # ...and multiplicity-identical data still passes, so the new digest is
+        # not simply refusing everything.
+        dup_same = os.path.join(root, "dup_same.csv")
+        with open(dup_same, "w", encoding="utf-8", newline="") as fh:
+            fh.write("id,name,val\n2,logout,bob\n1,login,alice\n1,login,alice\n")
+        rsame = compare(("csv", dup_src, None), ("csv", dup_same, None), None, None)
+        check(rsame.ok, "same rows incl. duplicates, re-ordered -> still PASS")
 
         # (d) --cols subset still validates, and a bad col is a usage error
         r4 = compare(src, dst, "id,name", None)

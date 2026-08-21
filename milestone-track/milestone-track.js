@@ -31,6 +31,9 @@ const HEADING_RE = /^(#{1,6})\s+(.+?)\s*$/;
 const TABLE_ROW_RE = /^\s*\|(.*)\|\s*$/;
 const SEP_CELL_RE = /^:?-{2,}:?$/;              // markdown table separator cell
 const CHECKBOX_RE = /^\s*[-*]\s+\[([ xX])\]\s*(.*)$/;
+// Checkbox-SHAPED but not checkbox-VALID. Anything matching this and not
+// CHECKBOX_RE is reported, never silently dropped from the counts.
+const MALFORMED_CB_RE = /^\s*[-*]\s*\[[^\]]*\]/;
 const STRUCK_RE = /~~.+?~~/;                     // strikethrough span (anywhere)
 // Whole-body strike: the entire description is one struck span, optionally
 // followed by a trailing dated/parenthetical note (e.g. "~~old~~ (dropped …)").
@@ -57,13 +60,26 @@ function splitCells(inner) {
 //           totals:{done,open,struck}, next:{line,text}|null }
 function compute(text, opts) {
   const lines = text.split(/\r?\n/);
-  const forkIdx = lines.findIndex((l) => FORK_RE.test(l));
+  // The LAST fork heading, not the first. The convention this tool serves is
+  // "PIVOT by forking · exactly one CURRENT DIRECTION", and a pivot APPENDS the
+  // new direction below the old one. `findIndex` scoped to the FIRST — i.e. the
+  // stale — fork, reporting a superseded plan's next item as the current one
+  // and merging both forks into a single "(preamble)" bucket. The tool assumed
+  // the convention it exists to track, and never checked it.
+  const forkIdxs = [];
+  lines.forEach((l, i) => { if (FORK_RE.test(l)) forkIdxs.push(i); });
+  const forkIdx = forkIdxs.length ? forkIdxs[forkIdxs.length - 1] : -1;
   const forkFound = forkIdx >= 0;
+  const extraForks = Math.max(0, forkIdxs.length - 1);
 
   let startIdx = 0, scopeLabel;
   if (forkFound && !opts.all) {
     startIdx = forkIdx;
     scopeLabel = "CURRENT DIRECTION fork (line " + (forkIdx + 1) + " → EOF)";
+    if (extraForks) {
+      scopeLabel += ` — WARNING: ${forkIdxs.length} CURRENT DIRECTION headings (lines ` +
+        forkIdxs.map((i) => i + 1).join(", ") + "); scoping to the LAST. Exactly one is the convention";
+    }
   } else if (forkFound) {
     scopeLabel = "entire file (--all; fork present but overridden)";
   } else {
@@ -93,6 +109,7 @@ function compute(text, opts) {
   }
 
   let next = null;
+  const unparseable = [];   // checkbox-shaped lines we could not read
   function record(kind, lineNo, preview) {
     const b = bucket();
     if (kind === "struck") b.struck++;
@@ -103,9 +120,26 @@ function compute(text, opts) {
     }
   }
 
+  // Fenced blocks and HTML comments are SKIPPED. A roadmap documents its own
+  // checkbox convention in a ``` example, and parks dropped ideas in
+  // `<!-- ... -->`; counting either put example text into the completion
+  // percentage and, worse, nominated it as `next:` — the two outputs anyone
+  // actually acts on. Measured 2026-08-20: a fixture with 1 done + 1 open plus
+  // one fenced example and one commented-out idea reported `overall: 2/6 done
+  // (33.3%)`, and a second reported `next: L3  EXAMPLE ONLY -- copy this format`.
+  let fenced = false;
+  let inComment = false;
   for (let i = startIdx; i < lines.length; i++) {
     const raw = lines[i];
     const lineNo = i + 1;
+
+    if (/^\s{0,3}(```|~~~)/.test(raw)) { fenced = !fenced; continue; }
+    if (fenced) continue;
+    if (!inComment && /<!--/.test(raw) && !/-->/.test(raw)) { inComment = true; continue; }
+    if (inComment) { if (/-->/.test(raw)) inComment = false; continue; }
+    // a single-line comment: strip it before the line is read at all
+    const visible = raw.replace(/<!--[\s\S]*?-->/g, "");
+    if (visible.trim() === "" && raw.trim() !== "") continue;
 
     // headings first — they set the current milestone / section context.
     const h = HEADING_RE.exec(raw);
@@ -153,13 +187,25 @@ function compute(text, opts) {
 
     // a struck plain bullet (no checkbox) counts as dropped/folded.
     const bulletStruck = /^\s*[-*]\s+(.*)$/.exec(raw);
-    if (bulletStruck && isStruck(bulletStruck[1])) record("struck", lineNo, bulletStruck[1].slice(0, NEXT_MAX));
+    if (bulletStruck && isStruck(bulletStruck[1])) {
+      record("struck", lineNo, bulletStruck[1].slice(0, NEXT_MAX));
+      continue;
+    }
+
+    // A line that LOOKS like a checkbox but does not parse — `-[ ]` (no space
+    // after the bullet), `- []` (empty brackets), `- [y]` (unknown marker) —
+    // used to vanish from every count with no notice, and the resulting
+    // percentage was then presented as complete. 3 of 10 lines in a stress
+    // fixture disappeared this way. Report it rather than dropping it.
+    if (MALFORMED_CB_RE.test(raw)) {
+      unparseable.push({ line: lineNo, text: raw.trim().slice(0, NEXT_MAX) });
+    }
   }
 
   const milestones = order.map((l) => byLabel.get(l)).filter((m) => m.done + m.open + m.struck > 0);
   const totals = milestones.reduce((t, m) => ({ done: t.done + m.done, open: t.open + m.open, struck: t.struck + m.struck }),
     { done: 0, open: 0, struck: 0 });
-  return { scopeLabel, forkFound, milestones, totals, next };
+  return { scopeLabel, forkFound, milestones, totals, next, unparseable, extraForks };
 }
 
 function pct(done, open) {
@@ -186,6 +232,15 @@ function report(file, res) {
   const t = res.totals;
   out.push(`overall: ${t.done}/${t.done + t.open} done (${pct(t.done, t.open)})` + (t.struck ? `, ${t.struck} struck` : ""));
   out.push(res.next ? `next: L${res.next.line}  ${res.next.text}` : "next: (none — no open items in scope)");
+  // Lines we could not read are stated, not dropped. A percentage computed over
+  // an unstated subset reads as a percentage over everything.
+  if (res.unparseable && res.unparseable.length) {
+    out.push("");
+    out.push(`WARNING: ${res.unparseable.length} checkbox-shaped line(s) could not be parsed and are in NO count:`);
+    for (const u of res.unparseable.slice(0, 10)) out.push(`  L${u.line}  ${u.text}`);
+    if (res.unparseable.length > 10) out.push(`  … and ${res.unparseable.length - 10} more`);
+    out.push('  (valid forms: "- [ ] item", "- [x] item")');
+  }
   return out.join("\n");
 }
 
@@ -266,6 +321,57 @@ function runCanary() {
     // (d) it is a REPORT, not a gate: render succeeds and struck never inflates done/open.
     check(typeof report("PRD_ROADMAP.md", all) === "string", "report renders");
     check(get("3").done + get("3").open === 2, "struck excluded from done/open denom");
+
+    // ---- 2026-08-20 audit --------------------------------------------------
+    // (e) a SECOND fork appended below the first is the documented PIVOT shape.
+    //     findIndex took the FIRST — the stale one — and reported a superseded
+    //     plan's next item as current.
+    const twoForks = FIXTURE +
+      "\n## CURRENT DIRECTION (forked later): the real plan\n\n" +
+      "- [ ] the genuinely current task\n- [x] something already done here\n";
+    const two = compute(twoForks, { all: false });
+    check(two.next && /the genuinely current task/.test(two.next.text),
+      `two forks: scopes to the LAST (next = ${two.next && two.next.text})`);
+    check(two.extraForks === 1, "two forks: the extra fork is counted");
+    check(/WARNING: 2 CURRENT DIRECTION headings/.test(two.scopeLabel),
+      "two forks: the scope line SAYS there is more than one");
+    check(compute(FIXTURE, { all: false }).extraForks === 0, "one fork: no warning");
+
+    // (f) checkbox-shaped lines that do not parse must be reported, not dropped.
+    //     3 of 10 lines in a stress fixture vanished from every count while the
+    //     resulting percentage was presented as complete.
+    const malformed = "## 9. Section\n" +
+      "- [ ] good open\n" +
+      "- [x] good done\n" +
+      "-[ ] no space after the bullet\n" +
+      "- [] empty brackets\n" +
+      "- [y] unknown marker\n";
+    const mal = compute(malformed, { all: true });
+    check(mal.totals.done === 1 && mal.totals.open === 1, "malformed: only the 2 valid checkboxes are counted");
+    check(mal.unparseable.length === 3,
+      `malformed: all 3 unreadable lines are reported (got ${mal.unparseable.length})`);
+    check(/could not be parsed/.test(report("x.md", mal)), "malformed: the report SAYS so");
+    check(compute(FIXTURE, { all: true }).unparseable.length === 0, "a clean fixture reports nothing unparseable");
+
+    // (g) 2026-08-20 audit: FENCED blocks and HTML comments. A roadmap
+    //     documents its own checkbox convention in a ``` example and parks
+    //     dropped ideas in <!-- -->; counting either put example text into the
+    //     completion percentage AND nominated it as `next:`.
+    const fencedFixture =
+      "# PRD\n\n## 1. Section\n\n- [x] a real done item\n- [ ] a real open item\n\n" +
+      "```markdown\n- [ ] EXAMPLE ONLY -- copy this format\n- [x] EXAMPLE ONLY -- and this\n```\n\n" +
+      "<!--\n- [ ] a parked idea\n- [ ] another parked idea\n-->\n";
+    const fr = compute(fencedFixture, { all: true });
+    check(fr.totals.done === 1 && fr.totals.open === 1,
+      `fenced + commented checkboxes are excluded (got ${fr.totals.done}/${fr.totals.open})`);
+    check(fr.next && /a real open item/.test(fr.next.text),
+      `next: names the real item, not the code sample (got ${fr.next && fr.next.text})`);
+    // a single-line comment on its own is stripped too
+    const inlineC = "## 2. S\n\n- [ ] real\n<!-- - [ ] parked -->\n";
+    check(compute(inlineC, { all: true }).totals.open === 1, "an inline HTML comment is stripped");
+    // ...and an UNfenced roadmap is unaffected, so this is not just refusing lines
+    check(compute("## 3. S\n\n- [x] one\n- [ ] two\n", { all: true }).totals.done === 1,
+      "an ordinary roadmap still counts normally");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -99,4 +99,4 @@ mismatch is CAUGHT (count + checksum mismatch, the dropped key named); also
 proves a re-ordered copy still matches (XOR order-independence), that a
 `--cols` subset validates, and that a delimiter-injection pair (two different
 row-tuples that share a naive tab-join) is CAUGHT rather than false-passing.
-Cleans up its temp dir. MUST print `CANARY PASS 14/14` before you trust a result.
+Cleans up its temp dir. MUST print `CANARY PASS 20/20` before you trust a result.
