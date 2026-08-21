@@ -59,7 +59,12 @@ The model just runs them — output quality doesn't degrade with a cheaper model
 | Skill | What it does |
 |---|---|
 | **trusted-advisor** | Candid advisor in two layers: a BASELINE (verdict first, no yes-man, honest calibration — always on) and a triggered FULL-CRITIQUE mode (severity-ranked, flaw-typed analysis). Yields to project/task instructions on format; never on honesty. |
-| **audit** | Full sweeping project audit: enumerate findings, rank by severity, present for one-word approval, then fix in order with each fix verified. Diagnosis-first — it does not fix before you approve the plan. |
+| **audit** | Exhaustive project audit across **both** domains — code and docs, plus the cross-domain pass neither can do alone (documented claims reconciled against observed behaviour). Run COLD by a fresh auditor, fanned out to parallel workers under a file manifest that proves coverage. Findings carry verification tiers (CONFIRMED / REPORTED / CONSTRUCTED / REFUTED); load-bearing negatives and architecture-level findings get their own sections. Diagnosis-first — it does not fix before you approve. |
+| **audit-code** | The code half at full depth: fifteen methods (invariant tracing, call-site contracts, error paths, static tooling, relative-churn targeting, dynamic verification, spec conformance, data-at-rest, deps/supply-chain, mutation-score test-suite validation, fuzzing/property-based exploration, adversary-first threat modelling, concurrency, architecture/dependency structure, compliance surface) plus four edge-case generators. |
+| **audit-docs** | Documentation audited for **defects**, against evidence — not a content inventory and not a style pass. Eight methods, led by claim verification (every count, existence and behavioural claim tested against disk) and code-element reference drift. Hunts WRONG before MISSING before UGLY, because that is the measured practitioner priority. |
+| **audit-recent** | The full both-domain sweep aimed at a diff instead of a tree — including uncommitted and untracked work, ranked by *relative* churn, with a mandatory blast-radius walk that pulls unchanged callers into scope. |
+| **audit-code-recent** | Code-only, recent-scope. The cheapest real audit in the set. |
+| **audit-docs-recent** | Docs-only, recent-scope — and, in the other direction, the docs that recent *code* changes should have updated and didn't. |
 | **skill-vet** | Evaluates a third-party skill / plugin / MCP server before you install it — capability, risk, redundancy with what you already run — and gives a keep/skip verdict. |
 | **research-brief** | Turns a topic into a sourced, decision-oriented research document — every claim cited, structured for the decision it feeds. |
 | **reorg-proposal** | Read-only codebase-reorganization advisor: inspects a repo and proposes a file/folder restructure — current tree, proposed tree, and a per-move risk table naming what each move breaks (imports, paths, build, CI) — and **writes nothing**. Grounds every path in a real `git ls-files` listing; "already coherent, propose nothing" is a valid outcome. |
@@ -91,8 +96,13 @@ node token-squeeze/test.js                                 # corpus guards (afte
   stdlib only. No dependencies.
 - **token-squeeze:** `cd token-squeeze && npm install` once (pulls
   `gpt-tokenizer`), then `node cli.js` / `node test.js`.
-- **Prose skills** (compact-io, opus-workers, trusted-advisor, audit, skill-vet, research-brief, reorg-proposal, github-repo-polish, venue-fit):
-  drop the folder into `~/.claude/skills/`; nothing to install.
+- **Prose skills** (compact-io, opus-workers, trusted-advisor, audit,
+  audit-code, audit-docs, audit-recent, audit-code-recent,
+  audit-docs-recent, skill-vet, research-brief, reorg-proposal,
+  github-repo-polish, venue-fit): drop the folder into
+  `~/.claude/skills/`; nothing to install. **The five `audit-*` skills read
+  shared reference files from `audit/references/` — install `audit`
+  alongside any of them.**
 - **commit-gate PreToolUse hook:** add to `~/.claude/settings.json` under
   `hooks.PreToolUse` an entry with `"matcher": "Bash"` running
   `node "<clone>/commit-gate/hooks/pretooluse-commit-gate.js"`.
