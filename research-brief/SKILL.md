@@ -70,13 +70,27 @@ claim were false, would the TL;DR change? If no, it is not load-bearing and
 does not need this treatment. Usually 3–8 of them.
 
 - **Re-fetch every load-bearing citation, by a different call than the one
-  that found it** — a second `WebFetch` against the URL, asking whether the
-  specific claim is present. Mark each **VERIFIED-VERBATIM** (the source
-  states it), **CLOSE-PARAPHRASE** (states it in other words),
-  **NOT-FOUND** (page loads, claim absent — the dangerous one), or
-  **UNREACHABLE**. A NOT-FOUND on a load-bearing claim kills the claim, not
-  the source's other uses. Never mark a citation verified because it *sounds*
+  that found it**, asking whether the specific claim is present. Mark each
+  **VERIFIED-VERBATIM** (the source states it), **CLOSE-PARAPHRASE** (states
+  it in other words), **NOT-FOUND** (page loads, claim absent — the dangerous
+  one), or **UNREACHABLE**. Never mark a citation verified because it *sounds*
   like what the source said.
+- **VERIFIED-VERBATIM requires the page's own text. A summarizing fetch tool
+  cannot produce it** (measured 2026-08-22). Where the fetch tool converts the
+  page and answers through a **separate small fast model** — as `WebFetch` does
+  — what returns is that model's rendition, so "the source states it" would be
+  a claim about the sub-model, not the source. In that measurement it *refused*
+  a verbatim request outright for a public-domain 1851 text that a browser
+  page-text read on the same URL returned in full. It **answers rather than
+  failing**, so nothing marks the difference. To claim VERIFIED-VERBATIM, read
+  the actual text — a browser page-text read, the raw file, or a quote you can
+  see on the page. A fetch-tool answer supports **CLOSE-PARAPHRASE at best**.
+- **A NOT-FOUND from a fetch tool is provisional, not a kill.** The sub-model
+  may have missed, compressed, or declined the passage rather than the source
+  lacking it. Confirm with a real text read before a NOT-FOUND retires a
+  load-bearing claim — killing a true claim on a summarizer's miss is the same
+  class of error as keeping a false one, and it looks like diligence. Once
+  confirmed, a NOT-FOUND kills that claim, not the source's other uses.
 - **Numbers register.** Every quantitative claim in one table: number ·
   what it claims · source · date · **source-interest class** (INDEPENDENT /
   VENDOR-SELF-REPORTED / ADVERSARIAL / UNVERIFIABLE) · verification verdict.
@@ -176,7 +190,10 @@ pre-market-report pipeline pattern).
 - Keep the chat response short — the file is the deliverable.
 - **A citation is not verified because it is plausible.** Only a re-fetch that
   finds the claim on the page verifies it. "It's the kind of thing that source
-  would say" is how a fabricated citation survives review.
+  would say" is how a fabricated citation survives review. **And only a read of
+  the page's own text counts as finding it** — an answer from a summarizing
+  fetch tool is one more model's paraphrase, which is the thing being guarded
+  against, not the guard. Routing between the two: `fetch-first`.
 - **A statistic from a live, growing corpus is a reading, not a constant** —
   pin its state (a count and a timestamp) beside the number, or quote the
   invariant instead of the aggregate.
