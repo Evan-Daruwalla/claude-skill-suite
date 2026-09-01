@@ -28,8 +28,16 @@
  * Reports file:line + why it breaks + the PS5.1-safe alternative.
  * Suppress one line with a trailing `# portability-ok` comment.
  *
+ * `check` exists because `scan` only reads FILES. A command written into a chat
+ * reply, a README, or a runbook never reaches the scanner's input surface — and
+ * that is exactly how a `cd X && git push` reaches a PowerShell 5.1 user: the
+ * rule to catch it already exists and has nothing to run against.
+ * `check` runs the same rule table over a bare string, defaulting
+ * to the PS 5.1 dialect because that is the shell such a command is pasted into.
+ *
  * Commands:
  *   scan <path> [<path>...]   recurse files/dirs, flag traps      (exit 1 on findings)
+ *   check "<command>" [--sh]  scan ONE command string, no file    (exit 1 on findings)
  *   --canary                  self-test (the done-check), both directions
  *   --help
  *
@@ -246,6 +254,41 @@ function cmdScan(paths) {
   return 1;
 }
 
+// Scan ONE command string rather than a file — the surface `scan` cannot reach.
+// Defaults to the PS 5.1 dialect (`--sh` switches to POSIX) because the point of
+// this mode is checking a command BEFORE handing it to someone whose shell is
+// PowerShell. Same rule table as `scan`; no new rules, no file I/O.
+function cmdCheck(args) {
+  const sh = args.includes("--sh");
+  const parts = args.filter((a) => a !== "--sh");
+  if (!parts.length) {
+    console.error('error: check needs a command string, e.g.  check "git pull && git push"');
+    return 2;
+  }
+  // Join the remaining args so an UNQUOTED command is still scanned in full
+  // where the shell left it intact. It often will NOT be: bash eats `&&` before
+  // Node ever sees it, so `check git pull && git push` checks only "git pull"
+  // and reports clean — a false negative, the worst outcome for a gate. That is
+  // why the clean line ECHOES what was actually checked, making the truncation
+  // visible instead of silent, and why --help says to always quote.
+  const command = parts.join(" ");
+  const ext = sh ? ".sh" : ".ps1";
+  const dialect = sh ? "POSIX sh/bash" : "PowerShell 5.1";
+  const findings = scanContent(command, ext);
+
+  if (!findings.length) {
+    console.log(`clean: no ${dialect} traps in: ${snip(command)}`);
+    return 0;
+  }
+  for (const fd of findings) {
+    console.log(`<command>:${fd.line}: [${fd.id}] ${fd.why}`);
+    console.log(`    fix: ${fd.fix}`);
+    console.log(`    > ${fd.snippet}`);
+  }
+  console.error(`\n${findings.length} finding(s) — do NOT hand this to a ${dialect} user as written.`);
+  return 1;
+}
+
 // ---- canary: the self-test AND the done-check ------------------------------
 // Proves BOTH directions in a throwaway dir: the documented traps are CAUGHT
 // and clean PS5.1-safe / POSIX code stays quiet. Writes only inside the temp
@@ -312,6 +355,18 @@ function runCanary() {
     // the existing suppression comment must keep working
     check(scanContent("git pull && git push  # portability-ok", ".ps1").length === 0,
       "# portability-ok still suppresses");
+
+    // ---- `check`: a command string is not a file --------------------------
+    // The exact command that was handed to a PS 5.1 user, and its safe form.
+    check(scanContent('cd "D:/x" && git push', ".ps1").length === 1,
+      "check: && in a handed-over command is caught");
+    check(scanContent('git -C "D:/x" push', ".ps1").length === 0,
+      "check: the chain-free git -C form is clean");
+    check(quiet(cmdCheck, ['cd "D:/x" && git push']) === 1, "cmdCheck -> exit 1 on a trap");
+    check(quiet(cmdCheck, ['git -C "D:/x" push']) === 0, "cmdCheck -> exit 0 when clean");
+    check(quiet(cmdCheck, ["echo $env:PATH", "--sh"]) === 1,
+      "cmdCheck --sh catches a PowerShell-ism in a POSIX command");
+    check(quiet(cmdCheck, []) === 2, "cmdCheck with no command -> exit 2");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -320,24 +375,33 @@ function runCanary() {
   return 1;
 }
 
-// cmdScan wrapper that swallows stdout/stderr (canary only wants the exit code).
-function cmdScanQuiet(paths) {
+// Run a command function with stdout/stderr swallowed (the canary wants only the
+// exit code). Shared by cmdScan and cmdCheck so there is one muting path.
+function quiet(fn, arg) {
   const log = console.log, err = console.error;
   console.log = console.error = () => {};
-  try { return cmdScan(paths); } finally { console.log = log; console.error = err; }
+  try { return fn(arg); } finally { console.log = log; console.error = err; }
 }
+function cmdScanQuiet(paths) { return quiet(cmdScan, paths); }
 
 // ---- arg parsing + help ----------------------------------------------------
 const HELP = `shell-portability — scan scripts for cross-shell syntax traps (read-only).
 
 Usage:
   node shell-portability.js scan <path> [<path>...]
+  node shell-portability.js check "<command>" [--sh]
   node shell-portability.js --canary
   node shell-portability.js --help
 
 Scans .ps1/.psm1 for PS7-only / bash-ism / non-interactive / unencoded-write
 traps, and .sh/.bash for PowerShell-isms. Reports file:line + why + the
 PS5.1-safe fix. Encoding/filename issues belong to path-quirk-audit, not here.
+
+check scans ONE command string instead of a file — use it before handing a
+command to someone to run. Defaults to the PowerShell 5.1 dialect; --sh checks
+it as POSIX instead. ALWAYS QUOTE the command: unquoted, your own shell eats
+the && before Node sees it, and only the first half gets checked. The clean
+line echoes what was actually scanned so that truncation is visible.
 
 Suppress one line with a trailing  # ${SUPPRESS}  comment.
 
@@ -350,6 +414,7 @@ function main() {
   }
   if (argv.includes("--canary")) process.exit(runCanary());
   if (argv[0] === "scan") process.exit(cmdScan(argv.slice(1)));
+  if (argv[0] === "check") process.exit(cmdCheck(argv.slice(1)));
   console.error(`error: unknown command '${argv[0]}'. Try --help.`);
   process.exit(2);
 }

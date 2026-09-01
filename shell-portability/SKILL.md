@@ -6,8 +6,10 @@ description: >-
   (PS7-only), Read-Host/pause/Out-GridView (block non-interactive runs),
   Set-Content/Add-Content/Out-File without -Encoding, bash-isms in .ps1 and
   PowerShell-isms in .sh. Use when: "will this run on PowerShell 5.1", "lint
-  my shell scripts", "shell-portability", before scheduling a script. Syntax
-  only — encoding/filename quirks are path-quirk-audit. Zero deps.
+  my shell scripts", "shell-portability", before scheduling a script — and
+  `check "<command>"` for ONE command string before handing it to someone to
+  run, the surface a file scan cannot reach. Syntax only — encoding/filename
+  quirks are path-quirk-audit. Zero deps.
 ---
 
 # shell-portability — cross-shell syntax trap scanner
@@ -50,6 +52,7 @@ Windows default, not PS7):
 
 ```
 node shell-portability.js scan <path> [<path>...]
+node shell-portability.js check "<command>" [--sh]
 node shell-portability.js --canary
 node shell-portability.js --help
 ```
@@ -65,6 +68,31 @@ node shell-portability.js --help
   ```
 
   Exit 1 if anything is flagged, 0 if clean.
+
+- **check** runs the same rule table over ONE command string instead of a
+  file. Use it before handing a command to someone to run. Defaults to the
+  PowerShell 5.1 dialect; `--sh` checks it as POSIX instead. Same exit codes.
+
+  ```
+  $ node shell-portability.js check 'cd "D:/repo" && npm run build'
+  <command>:1: [chain-and-or] PS 5.1 has no && / || pipeline-chain operators (parser error)
+      fix: A; if ($?) { B }  (and)   /   A; if (-not $?) { B }  (or)
+      > cd "D:/repo" && npm run build
+  ```
+
+  **ALWAYS QUOTE the command.** Unquoted, your own shell eats the `&&` before
+  Node sees it, so only the first half is scanned and it reports clean — a
+  false negative, the worst outcome for a gate. The clean line echoes exactly
+  what was scanned (`clean: no PowerShell 5.1 traps in: cd D:/repo`) so that
+  truncation is visible rather than silent.
+
+### Why `check` exists
+
+`scan` only reads **files**. A command written into a chat reply, a README, or
+a runbook never reaches the scanner's input surface — which is how a
+`cd X && git push` gets handed to a PowerShell 5.1 user with the rule that
+would catch it sitting right there, having nothing to run against. `check`
+closes that gap by making a bare string checkable.
 
 ### Suppression
 
@@ -113,6 +141,8 @@ node shell-portability.js --canary
 Self-tests both directions in a throwaway temp dir: the documented traps are
 CAUGHT (a bad `.ps1` with `&&` + a ternary + an unencoded `Set-Content` yields
 exactly 3 findings; `??`, `?.`, `Read-Host`, bash-assign, and a bad `.sh` each
-caught) AND clean PS5.1-safe / POSIX code stays quiet (0 findings), plus the
+caught) AND clean PS5.1-safe / POSIX code stays quiet (0 findings); the check
+mode catches a chained handed-over command and passes its chain-free form, in
+both dialects, and rejects an empty invocation; plus the
 `# portability-ok` suppression and an end-to-end directory walk. MUST print
-`CANARY PASS 16/16` before you trust a result.
+`CANARY PASS 22/22` before you trust a result.
