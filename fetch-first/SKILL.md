@@ -77,6 +77,15 @@ only on a **named** tier-1 failure or a genuine need:
   belongs here — a re-fetch that re-summarizes has verified nothing.
 - the fetch returned an empty shell, a JS-required notice, or obvious
   boilerplate where the content should be (client-rendered SPA);
+- **the fetch failed outright — an HTTP error (403/429/5xx), a refused fetch, or
+  any non-2xx response.** This is a distinct failure from the shell/SPA case
+  above: the site is not lazy-rendering, it is refusing the request. Reproduced
+  2026-08-22 in one harness: an institution's admissions-deadlines page 403'd
+  the fetch tool outright; a browser page-text read on the identical URL
+  returned the full page verbatim, no retry needed. A bot-guarded site failing
+  the fetch tool is not evidence the information is unreachable — it is the
+  single most missable named trigger in this ladder, because a 403 looks like
+  "not found" rather than "escalate";
 - the content is behind a click, a form, or a scroll-triggered load;
 - the answer is *visual* — layout, rendering, a chart with no text equivalent;
 - you are verifying a dev server or a published page render.
