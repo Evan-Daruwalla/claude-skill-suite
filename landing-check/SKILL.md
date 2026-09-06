@@ -17,7 +17,7 @@ description: >-
 # landing-check — did the work land, and are the claims true?
 
 Three questions nothing else in the toolchain asks. `/code-review` reads the
-diff for correctness. `/audit` sweeps the whole project, cold. `code-check`
+diff for correctness. `/audit` sweeps the whole project, cold. `coding-conventions`
 makes the author re-run their own code. All three can pass while the change
 went to a file nothing executes, the report states a number that is wrong, and
 half the copies were never touched.
@@ -44,7 +44,7 @@ never fires on its own.
 - **Code correctness in the diff** → `/code-review` (built-in; has multi-agent
   and `--fix`). Do not re-review logic here.
 - **Whole-project sweep** → `/audit` (cold, expensive).
-- **Re-running what you just wrote** → `code-check` (same context, author's own
+- **Re-running what you just wrote** → `coding-conventions` (same context, author's own
   eyes, fires from the PostToolUse hook).
   If a finding belongs to one of those, name it and hand it off — don't grow
   this skill into them.
@@ -239,7 +239,7 @@ Short. This is a pre-commit sanity sweep, not an audit report.
   exactly (no misland, no leak, 25/25 reproduced) — a sweep that reports only
   faults teaches nothing about what is solid, and the author's record needs
   them.
-- **Handoffs**: anything belonging to `/code-review`, `/audit`, or `code-check`,
+- **Handoffs**: anything belonging to `/code-review`, `/audit`, or `coding-conventions`,
   named and passed on rather than half-done here.
 
 ## After the report

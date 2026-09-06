@@ -1,21 +1,25 @@
 #!/usr/bin/env node
 /*
- * code-check — post-write nudge hook (PostToolUse, matcher "Edit|Write").
+ * coding-conventions — post-write injection hook (PostToolUse, matcher "Edit|Write").
  *
- * After Claude edits or writes a CODE file, injects a reminder to run the
- * code-check pass (see ../SKILL.md). The firing is deterministic; running the
- * pass is still the model's job — a hook cannot invoke a skill.
+ * After Claude edits or writes a CODE file, injects coding-conventions/SKILL.md's
+ * BODY (the four rules + the verification pass) as additionalContext. Formerly
+ * code-check's hook, which injected a one-sentence nudge; now the rules
+ * themselves ride along, because at high context the copy at the top of
+ * CLAUDE.md is no longer being read. Firing is deterministic; following the
+ * rules is still the model's job — a hook cannot invoke a skill.
  *
  * PostToolUse stdout is NOT shown to the model as plain text (it goes to the
  * debug log). Context must be returned as JSON on stdout:
  *   {"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"..."}}
  *
- * Debounced to at most one nudge per DEBOUNCE_MS per session, so a burst of
- * edits nudges once instead of once per file. Files edited while suppressed
- * are accumulated and named in the next nudge, so nothing goes unmentioned if
- * the burst continues. State: <tmp>/claude-code-check-<session>.json.
+ * Debounced to at most one injection per DEBOUNCE_MS per session, so a burst
+ * of edits injects once instead of once per file. Files edited while
+ * suppressed are accumulated and named in the next injection. State:
+ * <tmp>/claude-code-check-<session>.json (prefix kept from code-check so a
+ * session that straddled the rename keeps its debounce window).
  *
- * Off for a session: CODE_CHECK_OFF=1.
+ * Off for a session: CODING_CONVENTIONS_OFF=1 (CODE_CHECK_OFF=1 still honoured).
  * Always exits 0 — a hook error must never disrupt the session.
  *
  * Register in ~/.claude/settings.json:
@@ -29,6 +33,7 @@ const os = require("os");
 const path = require("path");
 
 const DEBOUNCE_MS = 90_000;
+const SKILL = path.join(__dirname, "..", "SKILL.md");
 
 // Extensions that count as code. Docs/config (.md .json .yaml .toml .txt)
 // deliberately excluded — editing those needs no run-check.
@@ -38,6 +43,13 @@ const CODE_EXT = new Set([
   ".kt", ".sh", ".bash", ".ps1", ".sql", ".ipynb",
 ]);
 
+// If SKILL.md is unreadable the hook still says SOMETHING — a silent hook is
+// a failure mode seen in practice (a broken registered path, exit 0, nothing).
+const FALLBACK =
+  "run the coding-conventions pass — re-read the real diff, make it actually " +
+  "run (paste real output), one runnable check behind non-trivial logic, every " +
+  "changed line traces to the request. Trivial edits: say so in one line.";
+
 function readStdin() {
   try {
     return fs.readFileSync(0, "utf8");
@@ -46,8 +58,22 @@ function readStdin() {
   }
 }
 
+// SKILL.md minus its YAML frontmatter; `file` is a parameter so the canary can
+// exercise the missing-file path without touching the real SKILL.md.
+function skillBody(file = SKILL) {
+  let text;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+  const m = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/.exec(text);
+  const body = (m ? text.slice(m[0].length) : text).trim();
+  return body.length ? body : null;
+}
+
 function main() {
-  if (process.env.CODE_CHECK_OFF) return 0;
+  if (process.env.CODING_CONVENTIONS_OFF || process.env.CODE_CHECK_OFF) return 0;
 
   const raw = readStdin();
   if (!raw) return 0;
@@ -94,18 +120,11 @@ function main() {
   try {
     fs.writeFileSync(statePath, JSON.stringify(state));
   } catch {
-    /* best-effort; a failed write just means the next edit re-nudges */
+    /* best-effort; a failed write just means the next edit re-injects */
   }
 
-  // one state file per session, and sessions are never revisited — prune stale
-  // ones so tmp does not accumulate a file per session forever.
-  //
-  // Only when the nudge is DUE, not on every write. This enumerates the WHOLE of
-  // %TEMP% — a directory that routinely holds thousands of entries — and it ran
-  // on every single Edit/Write of a code file, inside a hook with a 5-second
-  // budget, to delete files that are at least a day old. Tying it to `due` keeps
-  // it frequent enough (the debounce is minutes, not days) at a fraction of the
-  // cost, and needs no randomness to be reproducible.
+  // Prune stale per-session state files — only when DUE, because this walks
+  // the whole of %TEMP% (thousands of entries) inside a 5-second hook budget.
   if (due) {
     try {
       const cutoff = now - 24 * 60 * 60 * 1000;
@@ -122,25 +141,22 @@ function main() {
   if (!due) return 0;
 
   const list = touched.join(", ") + (more > 0 ? ` (+${more} more)` : "");
+  const body = skillBody();
   process.stdout.write(
     JSON.stringify({
       hookSpecificOutput: {
         hookEventName: "PostToolUse",
         additionalContext:
-          `[CODE-CHECK] Code written this turn: ${list}. Before reporting ` +
-          `done, run the code-check pass on it — re-read the real diff, make ` +
-          `it actually run (paste real output), confirm non-trivial logic has ` +
-          `one runnable check, and confirm every changed line traces to the ` +
-          `request. Trivial edits: say so in one line and move on. ` +
-          `(~/.claude/skills/code-check/SKILL.md)`,
+          `[CODING-CONVENTIONS] Code written this turn: ${list}. Before reporting done, ` +
+          (body ? `apply these rules to it:\n${body}` : FALLBACK),
       },
     }) + "\n"
   );
   return 0;
 }
 
-// self-test: fires on every Edit/Write, and stdout must be the additionalContext
-// envelope — a plain print here reaches the debug log, not the model.
+// self-test: fires on every Edit/Write of code, and stdout must be the
+// additionalContext envelope carrying the real rules.
 function runCanary() {
   const { spawnSync } = require("child_process");
   let pass = 0, fail = 0;
@@ -156,10 +172,17 @@ function runCanary() {
   check(out.includes("additionalContext"), "emits the additionalContext envelope (not a bare print)");
   check(out.includes("hookEventName"), "declares hookEventName");
   check(out.includes("thing.js"), "names the file that was written");
+  let parsed = null;
+  try { parsed = JSON.parse(out); } catch { /* checked below */ }
+  const ctx = (parsed && parsed.hookSpecificOutput && parsed.hookSpecificOutput.additionalContext) || "";
+  check(/Surgical changes only/.test(ctx), "injects rule 1 from the real SKILL.md");
+  check(/Verify before claiming done/.test(ctx), "injects rule 4 from the real SKILL.md");
+  check(/ran: <command>/.test(ctx), "injects the report block");
+  check(!/^---/m.test(ctx), "frontmatter is stripped from the injection");
 
   // second edit inside the debounce window must stay quiet
   r = fire(ev("C:/tmp/other.js"));
-  check((r.stdout || "").trim() === "", "debounced: a burst nudges once");
+  check((r.stdout || "").trim() === "", "debounced: a burst injects once");
 
   check((fire(ev("C:/tmp/notes.md")).stdout || "").trim() === "", "docs are not code -> silent");
   check((fire(ev("C:/tmp/data.json")).stdout || "").trim() === "", "config is not code -> silent");
@@ -167,8 +190,16 @@ function runCanary() {
   r = spawnSync(process.execPath, [__filename], { input: "not json", encoding: "utf8" });
   check(r.status === 0, "malformed stdin never blocks the tool call");
 
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cc-canary-"));
   try {
-    const os = require("os");
+    let threw = false, got = "sentinel";
+    try { got = skillBody(path.join(tmp, "missing.md")); } catch { threw = true; }
+    check(!threw && got === null, "a missing SKILL.md returns null (fallback text path) instead of throwing");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+
+  try {
     fs.unlinkSync(path.join(os.tmpdir(), `claude-code-check-${sid}.json`));
   } catch { /* already pruned */ }
 

@@ -41,7 +41,7 @@ most expensive.
 - **Did the change land where it actually executes?** → `landing-check`. This
   skill hunts defects; it does not verify a deployment reached the live file.
 - **Is this diff correct?** → `/code-review`.
-- **Did the code I just wrote run?** → `code-check` (fires on its own).
+- **Did the code I just wrote run?** → `coding-conventions` (fires on its own).
 - **One narrow mechanical check** → the specialist owns it, and this audit
   CALLS it rather than re-deriving it: `cve-audit`, `history-leak-scan`,
   `local-secrets-manage`, `data-integrity-audit`, `path-quirk-audit`,

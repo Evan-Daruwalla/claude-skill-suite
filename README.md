@@ -26,10 +26,12 @@ a skill the model has to remember to invoke.
 |---|---|
 | **llm-eval-harness** | Measures how far a cheaper model falls from your flagship model's quality bar, deterministically: `checks` (format / no-fabrication / surgical-scope assertions — no golden needed) and `golden` (word-level similarity to a captured flagship reference). Appends every run to a ratchet so the gap is a tracked series. No LLM-judge — a non-reproducible judge would be invented data. |
 | **token-squeeze** | Deterministic text compressor: strips filler and collapses verbose phrasing while a guard layer proves numbers, negations, dotted identifiers, and masked spans survive byte-for-byte. Ships a reproducible corpus test (`node test.js`). Requires `npm install` (`gpt-tokenizer`). |
-| **compact-io** | Always-on output-density style: lead with the answer, cut filler, plain words — governed by a **never-cut list** (numbers, paths, commands, caveats, tradeoffs, negations) so density never drops a fact. Also compresses a prompt/doc for reuse on request. Not a length cap. |
+| **compact-io** | Always-on output-density style: lead with the answer, cut filler, plain words — governed by a **never-cut list** (numbers, paths, commands, caveats, tradeoffs, negations) so density never drops a fact. Also compresses a prompt/doc for reuse on request. Not a length cap. Also carries the candor baseline (verdict first, no yes-man) and a triggered full-critique mode (`references/critique.md`) — absorbed `trusted-advisor`. |
 | **opus-workers** | Cost-tiered orchestration: when an expensive flagship (e.g. Fable 5, max/ultracode) spins up agents, route the WORKERS one tier cheaper and keep the flagship as a thin reviewer — accept, or send back with specific pointers, bounded to 2 redo rounds. The cheaper model does the bulk generation; the flagship only reviews. A *spawned* reviewer is never cheaper: it re-bills the worker's whole output as its own input and buys no catch-rate edge on an already-specified rubric. |
 | **fetch-first** | Routing rule for reaching the live internet: take the cheapest surface that can actually answer, and escalate only on a *named* failure. Docs MCP for library/framework questions → `WebSearch`/`WebFetch` for everything else → browser automation only when the page needs JS, interaction, visual proof, or **verbatim** text → a real logged-in browser only when the task needs a signed-in account. Measured (chars, 2026-08-22): a fetch tool that answers via a summarizing sub-model returns ≈660 chars on a 55,079-char Wikipedia page — **~83×** cheaper than a page-text read, and the gap *widens* with page size because fetch cost is bounded by the answer, not the page. The tradeoff it buys, and the trigger people miss: that fetch is lossy and is a second model's judgment — in the same measurement it refused a verbatim request for a public-domain 1851 text that a browser read returned in full. So verbatim quotes and citation verification must escalate, because the fetch *answers* rather than failing. |
-| **code-check** | Post-write verification pass, fired by a `PostToolUse` hook on `Edit`/`Write` of a **code** file (docs/config excluded, debounced so a burst nudges once): re-read the real diff, make it actually run with pasted output, confirm non-trivial logic has one runnable check, confirm every changed line traces to the request. Bans "should work." The firing is deterministic; running the pass is the model's job — a hook cannot invoke a skill. |
+| **coding-conventions** | The coding rules that drift without a trigger — surgical changes, root cause over symptom, simplicity-first rungs with marked shortcuts, verify before claiming done with one runnable check — plus the post-write verification pass. Injected by a `PostToolUse` hook after every `Edit`/`Write` of a **code** file (docs/config excluded, debounced so a burst injects once), so the rules land where code is being written instead of fading at the top of a long context. Absorbed `code-check`. |
+| **small-task** | Always-on task framing, injected on every prompt by a `UserPromptSubmit` hook: say what DONE proves, name blockers before starting, list micro-steps each ending in a check, riskiest step first, scope locked to this task. ~150 tokens per prompt, sitting next to the prompt it applies to. |
+| **long-task** | Execution loop for work longer than one sitting: a numbered plan where every step ends in a check, a one-line state tracker at the top of each turn, an iteration budget, and a **progress lock** — a `PostToolUseFailure` hook fires `[NO-PROGRESS]` when the same shell command fails the same way twice in a row, so spinning is caught by code rather than noticed by the model. |
 | **landing-check** | Post-work verification sweep run by a FRESH agent, invoked only: did the change land where it actually EXECUTES (a fix written to a `.git/hooks` file is dead code in a repo that sets `core.hooksPath`), and does a new guard actually FIRE on a planted positive, do the stated claims match disk (universals, counts, quoted output and numbers re-derived independently), what should have moved and didn't (sibling copies, corrections that did not propagate, docs quoting the old value, byproducts), and did anything land where it must NOT (a private identifier in a public copy). Reads claims from artifacts, never from the author's account — it is not self-grading. Defers code correctness to `/code-review`. |
 
 ## Deterministic quality & reproducibility gates
@@ -59,7 +61,6 @@ The model just runs them — output quality doesn't degrade with a cheaper model
 
 | Skill | What it does |
 |---|---|
-| **trusted-advisor** | Candid advisor in two layers: a BASELINE (verdict first, no yes-man, honest calibration — always on) and a triggered FULL-CRITIQUE mode (severity-ranked, flaw-typed analysis). Yields to project/task instructions on format; never on honesty. |
 | **audit** | Exhaustive project audit across **both** domains — code and docs, plus the cross-domain pass neither can do alone (documented claims reconciled against observed behaviour). Run COLD by a fresh auditor, fanned out to parallel workers under a file manifest that proves coverage. Findings carry verification tiers (CONFIRMED / REPORTED / CONSTRUCTED / REFUTED); load-bearing negatives and architecture-level findings get their own sections. Diagnosis-first — it does not fix before you approve. **Scope is an argument:** all three default to the whole project, and `recent` scopes to work since a base ref — including uncommitted and untracked changes, ranked by *relative* churn, with a mandatory blast-radius walk onto unchanged callers. |
 | **audit-code** | The code half at full depth: fifteen methods (invariant tracing, call-site contracts, error paths, static tooling, relative-churn targeting, dynamic verification, spec conformance, data-at-rest, deps/supply-chain, mutation-score test-suite validation, fuzzing/property-based exploration, adversary-first threat modelling, concurrency, architecture/dependency structure, compliance surface) plus four edge-case generators. |
 | **audit-docs** | Documentation audited for **defects**, against evidence — not a content inventory and not a style pass. Eight methods, led by claim verification (every count, existence and behavioural claim tested against disk) and code-element reference drift. Hunts WRONG before MISSING before UGLY, because that is the measured practitioner priority. |
@@ -96,7 +97,7 @@ node token-squeeze/test.js                                 # corpus guards (afte
   stdlib only. No dependencies.
 - **token-squeeze:** `cd token-squeeze && npm install` once (pulls
   `gpt-tokenizer`), then `node cli.js` / `node test.js`.
-- **Prose skills** (compact-io, opus-workers, fetch-first, trusted-advisor, audit,
+- **Prose skills** (compact-io, small-task, long-task, opus-workers, fetch-first, audit,
   audit-code, audit-docs, skill-vet, research-brief, reorg-proposal,
   github-repo-polish, venue-fit): drop the folder into
   `~/.claude/skills/`; nothing to install. **`audit-code` and `audit-docs` read
@@ -107,9 +108,14 @@ node token-squeeze/test.js                                 # corpus guards (afte
   `node "<clone>/commit-gate/hooks/pretooluse-commit-gate.js"`.
 - **commit-gate git hook:** set `SCANNER` at the top of `commit-gate/hooks/pre-commit`
   to your clone path, then `cp commit-gate/hooks/pre-commit <repo>/.git/hooks/`.
-- **code-check PostToolUse hook:** add to `~/.claude/settings.json` under
+- **coding-conventions PostToolUse hook:** add to `~/.claude/settings.json` under
   `hooks.PostToolUse` an entry with `"matcher": "Edit|Write"` running
-  `node "<clone>/code-check/hooks/postwrite-check.js"`.
+  `node "<clone>/coding-conventions/hooks/postwrite-check.js"`.
+- **small-task UserPromptSubmit hook:** under `hooks.UserPromptSubmit`, an entry
+  (no matcher) running `node "<clone>/small-task/hooks/prompt-frame.js"`.
+- **long-task PostToolUseFailure hook:** under `hooks.PostToolUseFailure`, an
+  entry with `"matcher": "Bash|PowerShell"` running
+  `node "<clone>/long-task/hooks/no-progress.js"`.
 
 ## Design notes
 
