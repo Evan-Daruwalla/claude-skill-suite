@@ -46,8 +46,27 @@ const { spawnSync } = require("child_process");
 // deliberate act; `--write-pin` is how you say so.
 const PINS_FILE = path.join(__dirname, "canary-pins.json");
 
+// Files the discovery walk could not open. Module-level because findCanaries
+// recurses; drained once at report time.
+const UNREADABLE = [];
+
 function loadPins() {
-  try { return JSON.parse(fs.readFileSync(PINS_FILE, "utf8")); } catch { return {}; }
+  // A MISSING pins file is legitimate: an unpinned tree prints NO PIN and the
+  // caller handles it. A CORRUPT one is not. Collapsing both to `{}` degraded
+  // every tree to "NO PIN" and attached the wrong cause to the right symptom,
+  // so one JSON typo read as "you never pinned this" rather than "your pins
+  // are unreadable". The NO-PIN exit exists because a self-reported
+  // denominator must be loud; losing every denominator must be louder.
+  let raw;
+  try { raw = fs.readFileSync(PINS_FILE, "utf8"); }
+  catch { return {}; }                      // absent: genuinely unpinned
+  try { return JSON.parse(raw); }
+  catch (e) {
+    console.error(`run-all-canaries: pins file is CORRUPT — ${PINS_FILE}`);
+    console.error(`  ${e.message}`);
+    console.error("  Refusing to report on any tree: every pin would read as absent.");
+    process.exit(2);
+  }
 }
 // Key RELATIVE to the pins file wherever possible: "." for the tree this file
 // sits in, "../skills" for a sibling. An absolute key would bake one machine's
@@ -90,7 +109,16 @@ function findDocPin(scriptPath, allCanaries) {
     // NAMING beats position. A line that mentions this script is unambiguous
     // however many pins the file holds, and it is the only way a multi-script
     // skill (project-memory holds three) can pin any of them at all.
-    const named = lines.filter((l) => l.includes(base) || l.includes(base.replace(/\.[^.]+$/, "")));
+    // FULL BASENAME first. The stem fallback below is deliberately loose, and
+    // loose matching is ambiguous exactly where it matters: `pm-cadence.js`
+    // stems to `pm-cadence`, which ALSO matches the line naming
+    // `pm-cadence-autoinit.js`. Two hits meant "cannot attribute", so a pin
+    // that was written correctly still read as missing. Any script whose name
+    // is a prefix of a sibling's was unpinnable.
+    const exact = lines.filter((l) => l.includes(base));
+    if (exact.length === 1) return num(exact[0]);
+    if (exact.length > 1) return null;              // genuinely ambiguous
+    const named = lines.filter((l) => l.includes(base.replace(/\.[^.]+$/, "")));
     if (named.length === 1) return num(named[0]);
     // Otherwise a lone pin belongs to this script only if it is the skill's only
     // canary. An earlier version claimed the caller's dir walk "already
@@ -177,6 +205,17 @@ function selfTest() {
   T("naming beats position for the CLI", findDocPin(cli, [cli, hook]) === 57);
   T("naming beats position for the hook", findDocPin(hook, [cli, hook]) === 26);
 
+  // A script whose basename is a PREFIX of a sibling's. The stem match alone
+  // hits both lines and attributes neither, which is how a correctly-written
+  // pin sat unattributed in a real skill.
+  const pfxA = mk("pfx/hooks/cadence.js", "// x\n");
+  const pfxB = mk("pfx/hooks/cadence-autoinit.js", "// x\n");
+  mk("pfx/SKILL.md",
+    "`node hooks/cadence-autoinit.js --canary` — MUST print `CANARY PASS 11/11`.\n" +
+    "`node hooks/cadence.js --canary` — MUST print `CANARY PASS 54/54`.\n");
+  T("a name that PREFIXES a sibling still attributes", findDocPin(pfxA, [pfxA, pfxB]) === 54);
+  T("...and the longer sibling is unaffected", findDocPin(pfxB, [pfxA, pfxB]) === 11);
+
   // Two pins, NEITHER naming a script: refuse rather than guess. Guessing by
   // position is how a whole-file substitution rewrote both with one number.
   const a2 = mk("amb/a.js", "// x\n"), b2 = mk("amb/b.js", "// x\n");
@@ -217,6 +256,30 @@ function selfTest() {
   // --- pinKey: an absolute key would leak a local path into a public repo ---
   T("a sibling tree keys relatively", !path.isAbsolute(pinKey(path.join(__dirname, "x"))));
   T("this directory keys as '.'", pinKey(__dirname) === ".");
+  // --write-pin must refuse on ANY finding, not just a failing canary. The
+  // guard calls process.exit, so it is asserted off the real SOURCE — and on
+  // something that CHANGES if the guard is removed, not on a string that is
+  // true forever.
+  const selfSrc2 = fs.readFileSync(__filename, "utf8");
+  const wpBlock2 = selfSrc2.slice(selfSrc2.indexOf("\nif (writePin) {"));
+  const guard2 = wpBlock2.slice(0, wpBlock2.indexOf("const pins = loadPins()"));
+  // L3/L4: error-path decisions that cannot be exercised in-process without
+  // breaking the running script, so they are read off the real source.
+  T("loadPins tells a missing pins file from a corrupt one",
+    /catch { return {}; }\s*\/\/ absent/.test(selfSrc2) && /pins file is CORRUPT/.test(selfSrc2));
+  T("...and a corrupt pins file is fatal, not a silent empty set",
+    /pins file is CORRUPT[\s\S]{0,400}process\.exit\(2\)/.test(selfSrc2));
+  T("an unreadable canary file is separated from 'ships no --canary'",
+    /UNREADABLE\.push/.test(selfSrc2));
+  T("...and it sets the exit code rather than only printing",
+    /if \(UNREADABLE\.length\) {[\s\S]{0,400}bad = true;/.test(selfSrc2));
+
+  T("--write-pin refuses on a failing canary", /failed\.length/.test(guard2));
+  T("--write-pin ALSO refuses on any other finding", /if \(bad\)/.test(guard2));
+  T("...and that guard exits non-zero rather than warning",
+    /if \(bad\)[\s\S]*?process\.exit\(1\)/.test(guard2));
+  T("the exit code is derived from the same `bad`", /process\.exit\(bad \? 1 : 0\)/.test(selfSrc2));
+
   T("keys are lowercased so D:\\ and /d/ cannot disagree",
     pinKey(path.join(__dirname, "MiXeD")) === pinKey(path.join(__dirname, "mixed")));
 
@@ -267,7 +330,11 @@ function findCanaries(dir, out = []) {
       // published into the suite too, so scanning that tree finds a *copy*.
       if (e.name === path.basename(__filename)) continue;
       let src = "";
-      try { src = fs.readFileSync(p, "utf8"); } catch { continue; }
+      // An unreadable file used to be dropped here and then counted in the
+      // "ships no --canary" line below — an I/O error wearing the label of a
+      // deliberate choice. Collected separately so it reports as what it is.
+      try { src = fs.readFileSync(p, "utf8"); }
+      catch (e) { UNREADABLE.push(`${p} — ${e.code || e.message}`); continue; }
       if (src.includes("--canary")) out.push(p);
     }
   }
@@ -281,6 +348,17 @@ let pass = 0;
 const failed = [];
 const docPinStale = [];
 const docPinAbsent = [];
+// Canaries that cannot carry a `CANARY PASS n/n` pin, and why. Each is a
+// recorded decision, not a backlog item: reported as DECLARED so the
+// unattributed count means "unfinished" and nothing else.
+const DECLARED_UNPINNABLE = {
+  "claim-check/hooks/claim-check.js":
+    "ships no SKILL.md by design — it is a hook, registered rather than loaded",
+  "history-leak-scan/pm-secretscan.js":
+    "prints its own verdict shape (`canary: N real caught ... -> PASS`), not `CANARY PASS n/n`",
+  "the-humanizer/scripts/voice_stats.py":
+    "prints diagnostics and no verdict line; its pass/fail is the exit code alone",
+};
 
 for (const f of files) {
   const label = path.relative(root, f).replace(/\\/g, "/");
@@ -330,6 +408,12 @@ const skipped = [];
 })(root);
 console.log(`\n=== ${pass}/${files.length} canaries passed ===`);
 if (skipped.length) console.log(`(${skipped.length} script(s) ship no --canary and were NOT tested: ${skipped.slice(0, 6).join(", ")}${skipped.length > 6 ? ", +" + (skipped.length - 6) + " more" : ""})`);
+if (UNREADABLE.length) {
+  console.log(`UNREADABLE (${UNREADABLE.length}): ${UNREADABLE.join(", ")}`);
+  console.log("  A file the walk could not open is NOT the same as one that ships no canary.");
+  console.log("  This run cannot claim whole-tree health.");
+  bad = true;
+}
 // Discovery is .js/.py only. If your suite also keeps SHELL canaries — a gate
 // self-test, an install check — they are outside this tally entirely, and an
 // unqualified "N/N passed" then reads as whole-tree health when the most
@@ -341,8 +425,14 @@ if (skipped.length) console.log(`(${skipped.length} script(s) ship no --canary a
 console.log("(shell canaries, if your tree keeps any, are NOT run by this runner — run them by hand after touching a pre-commit hook or a PreToolUse gate, and list their exact argument forms here so the instruction is followable)");
 let bad = failed.length > 0;
 if (failed.length) console.log(`failed: ${failed.join(", ")}`);
-if (docPinAbsent.length) {
-  console.log(`(${docPinAbsent.length} canary(ies) whose SKILL.md pin could not be ATTRIBUTED to them — UNCHECKED, not passing (it states none, or it states several and names no script): ${docPinAbsent.slice(0, 5).join(", ")}${docPinAbsent.length > 5 ? ", +" + (docPinAbsent.length - 5) + " more" : ""})`);
+const declared = docPinAbsent.filter((l) => DECLARED_UNPINNABLE[l]);
+const undeclared = docPinAbsent.filter((l) => !DECLARED_UNPINNABLE[l]);
+if (declared.length) {
+  console.log(`(${declared.length} canary(ies) DECLARED unpinnable — a recorded decision, not a gap:)`);
+  for (const l of declared) console.log(`    ${l} — ${DECLARED_UNPINNABLE[l]}`);
+}
+if (undeclared.length) {
+  console.log(`(${undeclared.length} canary(ies) whose SKILL.md pin could not be ATTRIBUTED to them — UNCHECKED, not passing (it states none, or it states several and names no script): ${undeclared.slice(0, 5).join(", ")}${undeclared.length > 5 ? ", +" + (undeclared.length - 5) + " more" : ""})`);
 }
 if (docPinStale.length) {
   console.log(`DOC PINS STALE (${docPinStale.length}): ${docPinStale.join(", ")}`);
@@ -356,6 +446,21 @@ if (docPinStale.length) {
 if (writePin) {
   if (failed.length) {
     console.log(`REFUSING to write a pin while ${failed.length} canary(ies) FAIL — fix them first.`);
+    process.exit(1);
+  }
+  // ...and refuse on ANY other finding, not just a failing canary. Reading
+  // `failed.length` alone let this write a pin at exit 0 while a tree-sync
+  // DRIFT was on screen — blessing a tree it had just reported as broken.
+  // `bad` is the same value the exit code is derived from, so the rule is:
+  // this command cannot report a problem and record a pin in one run.
+  //
+  // The count checks that legitimately motivate --write-pin (COUNT MISMATCH,
+  // PIN MANIFEST MISMATCH) run BELOW this block and cannot reach `bad` here,
+  // so adding a canary still works.
+  if (bad) {
+    console.log("REFUSING to write a pin: this run reported a finding above " +
+      "(tree-sync drift, a leak, or a stale doc pin). A pin recorded over a " +
+      "known-bad tree certifies the breakage. Fix it, then re-run --write-pin.");
     process.exit(1);
   }
   const pins = loadPins();

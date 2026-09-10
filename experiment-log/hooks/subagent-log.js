@@ -280,6 +280,20 @@ function canary() {
   t('result_head survives a JSON round-trip intact', JSON.parse(JSON.stringify({ h: head })).h === head);
 
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {}
+  // L8: a payload we cannot parse still represents a run that HAPPENED.
+  // Dropping it silently made the dataset look complete while rows went
+  // missing — invisible by construction, since 0 of 1,509 rows are annotated.
+  // Asserted off the source: the write path exits the process, so it cannot
+  // be driven in-process without ending the canary.
+  {
+    const selfSrc = fs.readFileSync(__filename, 'utf8');
+    t('an unparseable payload writes a LABELED row, not nothing',
+      /error: 'unparseable payload'/.test(selfSrc));
+    t('a non-object payload is labeled too', /error: 'payload not an object'/.test(selfSrc));
+    t('a WRITE failure stays silent, and says why',
+      /nowhere left to record itself/.test(selfSrc));
+  }
+
   console.log(fail === 0 ? `CANARY PASS ${pass}/${pass + fail}` : `CANARY FAIL ${pass}/${pass + fail}`);
   process.exit(fail === 0 ? 0 : 1);
 }
@@ -305,17 +319,31 @@ if (process.argv.includes('--canary')) {
   process.stdin.on('error', () => process.exit(0));
   process.stdin.on('data', (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
   process.stdin.on('end', () => {
+    const raw = Buffer.concat(chunks).toString('utf8');
+    let entry = null;
     try {
-      const raw = Buffer.concat(chunks).toString('utf8');
       const payload = JSON.parse(raw);
       // stdin `5` (a bare scalar) used to write a fully-null phantom row.
-      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) process.exit(0);
-      const entry = buildEntry(payload);
-      if (!LOG) process.exit(0);          // no home dir: nowhere correct to write
-      fs.mkdirSync(path.dirname(LOG), { recursive: true });
-      fs.appendFileSync(LOG, JSON.stringify(entry) + '\n', 'utf8');
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        entry = { ts: new Date().toISOString(), error: 'payload not an object', bytes: raw.length };
+      } else {
+        entry = buildEntry(payload);
+      }
+    } catch (e) {
+      // A row we cannot parse is still a run that HAPPENED. Writing a labeled
+      // row keeps the gap visible in the dataset; dropping it silently makes
+      // the dataset look complete while it is not. Same reason a zero is
+      // labeled rather than omitted elsewhere in this file.
+      entry = { ts: new Date().toISOString(), error: 'unparseable payload', bytes: raw.length };
+    }
+    try {
+      if (LOG && entry) {
+        fs.mkdirSync(path.dirname(LOG), { recursive: true });
+        fs.appendFileSync(LOG, JSON.stringify(entry) + '\n', 'utf8');
+      }
     } catch (_) {
-      // a logging failure must never block the turn
+      // A WRITE failure is the one case with nowhere left to record itself, and
+      // a logging failure must never block the turn. Silent here is correct.
     }
     process.exit(0);
   });

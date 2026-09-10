@@ -46,3 +46,5 @@ prompt is for), **CONSTRAINTS** (bullets — the non-negotiable rules), **CONTEX
 step on top of the deterministic pass, not something the CLI does — do it only
 when asked to prep a prompt for reuse (a saved prompt, a system prompt, a skill
 body), not for a one-off message.
+
+`node cli.js --canary` — MUST print `CANARY PASS 15/15` before you trust a result.

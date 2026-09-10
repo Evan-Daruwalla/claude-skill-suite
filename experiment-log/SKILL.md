@@ -148,7 +148,7 @@ exact components are logged instead and any aggregate can be computed later.
 Don't "fix" this into a fitted number.
 
 The hook never blocks a turn: every failure path exits 0 silently. Verify with
-`node hooks/subagent-log.js --canary` — MUST print `CANARY PASS 26/26`.
+`node hooks/subagent-log.js --canary` — MUST print `CANARY PASS 29/29`.
 
 ## Windows notes
 

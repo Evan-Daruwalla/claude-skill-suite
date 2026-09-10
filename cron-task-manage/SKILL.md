@@ -105,3 +105,5 @@ Self-tests both directions in a throwaway temp dir: a mixed fixture flags **exac
 flags **0** and exits 0 — plus past-next-run detection, scope filtering, quoted-comma
 CSV parsing, plan-mode printing, and a live smoke that real `schtasks /query` parses
 to >= 0 tasks without crashing. MUST print `CANARY PASS n/n` before you trust a run.
+
+`node cron-audit.js --canary` — MUST print `CANARY PASS 35/35` before you trust a result.

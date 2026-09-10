@@ -48,3 +48,5 @@ When asked to commit a large change: propose a split into atomic commits (one
 logical change each), and write outcome-first messages (imperative subject, body
 explaining WHY). This half is model judgment; the gate above is the deterministic
 guarantee.
+
+`node hooks/pretooluse-commit-gate.js --canary` — MUST print `CANARY PASS 27/27` before you trust a result.

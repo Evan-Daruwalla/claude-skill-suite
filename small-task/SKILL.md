@@ -18,3 +18,5 @@ Before the first edit or command of a task:
 5. SCOPE LOCK — this task only. Unrelated bugs get named, not fixed.
 
 A chat question needs none of this — answer it. More than one sitting or ~7 steps → long-task.
+
+`node hooks/prompt-frame.js --canary` — MUST print `CANARY PASS 13/13` before you trust a result.

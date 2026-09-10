@@ -69,3 +69,5 @@ before shipping → pre-mortem. Recording the run → the project's record.
 - Off for a session: `NO_PROGRESS_OFF=1`.
 - The repeat threshold and error normalisation live at the top of
   `hooks/no-progress.js`.
+
+`node hooks/no-progress.js --canary` — MUST print `CANARY PASS 14/14` before you trust a result.

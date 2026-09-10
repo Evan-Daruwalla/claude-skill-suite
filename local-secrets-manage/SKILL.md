@@ -98,3 +98,5 @@ on-disk `.env.local` (→ `UNIGNORED`), an ignored `.env.ok` (→ `OK`), and an 
 `.env.example`; asserts all four verdicts, exit 1, and the exact `--fix-print`
 lines — then asserts a clean repo exits 0 and a non-repo exits 2. Cleans up.
 MUST print `CANARY PASS n/n` before you trust a result.
+
+`node local-secrets.js --canary` — MUST print `CANARY PASS 29/29` before you trust a result.

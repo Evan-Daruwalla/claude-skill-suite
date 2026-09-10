@@ -93,3 +93,5 @@ the current UTC offset (recomputed independently in the canary from the same
 `ZONES` map), `--why` appears only when given, a second `add` appends without
 disturbing the first line, and missing decision text exits 2 without creating a
 file. MUST print `CANARY PASS n/n` before you trust a result.
+
+`node decision-log.js --canary` — MUST print `CANARY PASS 25/25` before you trust a result.
