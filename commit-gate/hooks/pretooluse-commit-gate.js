@@ -46,7 +46,7 @@ function unquote(s) {
   return /^".*"$|^'.*'$/.test(s) ? s.slice(1, -1) : s;
 }
 
-// On this platform the Bash tool IS Git Bash, so `/d/ClaudeCode/Skills` is the
+// On this platform the Bash tool IS Git Bash, so a `/d/<drive>/<path>` form is the
 // natural spelling — but `path.resolve("D:\\…","/d/x")` yields `C:\d\x`, git
 // says "cannot chdir", the scanner exits 2, and the gate fails OPEN on a commit
 // it never scanned.
