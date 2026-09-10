@@ -9,6 +9,7 @@
     "decision-log/decision-log.js",
     "determinism-guard/determinism-guard.js",
     "etl-validate/etl_validate.py",
+    "experiment-log/agent-runs.js",
     "experiment-log/experiment-log.js",
     "experiment-log/hooks/subagent-log.js",
     "flaky-test-detector/flaky-detect.js",

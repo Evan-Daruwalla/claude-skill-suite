@@ -125,7 +125,13 @@ function findDocPin(scriptPath, allCanaries) {
     // establishes" that; it does not, and reporting the wrong script as stale is
     // worse than reporting nothing — it sends you to edit a file that was right.
     const siblings = allCanaries.filter((g) => g === scriptPath || g.startsWith(dir + path.sep));
-    if (lines.length === 1 && siblings.length === 1) return num(lines[0]);
+    // ...unless that lone pin NAMES a different script. A pin line naming a
+    // script is that script's pin: the installed the-humanizer has one canary
+    // (voice_stats.py) and a SKILL.md, byte-identical to the lab copy, whose
+    // one pin is for the lab-only extract_corpus.py. Without this check that
+    // 7/7 was handed to a script that does not print it.
+    const namesOther = (l) => (l.match(/[\w.-]+\.(?:js|py)\b/g) || []).some((n) => n !== base);
+    if (lines.length === 1 && siblings.length === 1 && !namesOther(lines[0])) return num(lines[0]);
     return null;
   }
   return null;
@@ -227,6 +233,13 @@ function selfTest() {
   const c1 = mk("multi/one.js", "// x\n"), c2 = mk("multi/two.js", "// x\n");
   mk("multi/SKILL.md", "MUST print `CANARY PASS 9/9`.\n");
   T("a lone pin with siblings is refused", findDocPin(c1, [c1, c2]) === null);
+
+  // A lone pin that NAMES another script belongs to that script, even when
+  // this skill has only one canary (the the-humanizer installed/lab split).
+  const lone = mk("lone/scripts/voice.py", "# x\n");
+  mk("lone/SKILL.md", "`python scripts/other.py --canary` — MUST print `CANARY PASS 7/7`.\n");
+  T("a lone pin that names ANOTHER script is not attributed to this one",
+    findDocPin(lone, [lone]) === null);
 
   const nopin = mk("none/none.js", "// x\n");
   mk("none/SKILL.md", "no pin stated here\n");
@@ -358,6 +371,12 @@ const DECLARED_UNPINNABLE = {
     "prints its own verdict shape (`canary: N real caught ... -> PASS`), not `CANARY PASS n/n`",
   "the-humanizer/scripts/voice_stats.py":
     "prints diagnostics and no verdict line; its pass/fail is the exit code alone",
+  // These three hooks inject their SKILL.md BODY into context — two on every
+  // prompt, one after every code edit. A pin line in that body is re-sent on
+  // every turn (it shipped that way for one session, 2026-09-10).
+  "small-task/hooks/prompt-frame.js": "its hook injects the SKILL.md body into context, so a pin line there costs tokens on every turn",
+  "compact-io/hooks/prompt-density.js": "its hook injects the SKILL.md body into context, so a pin line there costs tokens on every turn",
+  "coding-conventions/hooks/postwrite-check.js": "its hook injects the SKILL.md body into context, so a pin line there costs tokens on every turn",
 };
 
 for (const f of files) {

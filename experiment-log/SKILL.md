@@ -108,10 +108,13 @@ Each line carries `ts`, `session_id`, `agent_id`, `agent_type`, `name`,
 `finding`. **`transcript` says whether the numbers beside it are real**:
 `parsed` (they are), `absent`, `unreadable`, `no-usage`, or `none-declared`.
 Without it a missing transcript produced `input_new:0, output_tokens:0,
-turns:0` — byte-identical to a genuinely cheap run, and on one real dataset 38%
-of rows were all-zero while every one of them carried a `result_head`, so the
-agent demonstrably ran. Rows written before the column existed have no
-`transcript` key; treat an all-zero row without one as unknown cost, not free.
+turns:0` — byte-identical to a genuinely cheap run. **But most all-zero rows
+are not work at all:** on one real 1,531-row dataset, 798 of 807 all-zero rows
+had no `agent_type`, no `description`, and a `result_head` like `do all`, `3`
+or the literal `<no suggestion>` — the harness's prompt-suggestion agent
+guessing the user's next message. Only 9 were work agents whose transcript was
+lost. `node agent-runs.js report` separates the two; never count raw rows as
+runs.
 **`finding`
 is always `null` — it is yours to fill in by hand.** That column is the point of
 the exercise: cost is measured automatically, value is not.
@@ -198,3 +201,31 @@ correctness is pinned against a precomputed sha256 literal, so a broken/constant
 hash implementation fails the self-test rather than passing it circularly.
 `node experiment-log.js --canary` MUST print `CANARY PASS 57/57` before you
 trust a result.
+
+## Reading the log, and recording what an agent was worth
+
+`agent-runs.js` is the reader and the annotator. It never rewrites
+`agent-runs.jsonl` — that file is append-only and live. Verdicts go to a
+sidecar, `~/.claude/agent-findings.jsonl`, joined at read time; the latest
+verdict for an agent wins.
+
+    node agent-runs.js report                    # the real counts
+    node agent-runs.js list --unannotated        # work agents still unjudged
+    node agent-runs.js annotate <agent_id> <verdict> <how you verified it>
+
+Verdicts: `caught` (at least one issue later confirmed, none refuted), `mixed`
+(some confirmed, at least one refuted), `wrong` (refuted), `clean` (nothing
+reported, nothing later found in its scope), `n/a` (not a review — extraction,
+planning, drafting). **Annotate only what you verified, and say how in the
+note.** A verdict from memory is a fabricated data point; the note is required
+so the "how" can be checked later.
+
+Two counting rules it enforces:
+
+- **A row is a stop, not an agent.** An agent resumed with SendMessage is
+  logged again. Its token count is usually cumulative but sometimes drops
+  between stops, so the reader takes each agent's maximum — never a sum.
+- **Prompt-suggestion rows are not work.** No type, no description, zero
+  usage: excluded from every count except their own.
+
+`node agent-runs.js --canary` — MUST print `CANARY PASS 22/22` before you trust a result.

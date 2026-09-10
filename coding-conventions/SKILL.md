@@ -76,5 +76,3 @@ A failure reported with its output beats a pass you didn't run.
 Sources: the engineering-discipline block of a personal CLAUDE.md (moved here
 2026-09-06), the `code-check` skill (merged), and Andrej Karpathy's LLM-coding
 observations as packaged in the MIT `karpathy-guidelines` skill.
-
-`node hooks/postwrite-check.js --canary` — MUST print `CANARY PASS 13/13` before you trust a result.
