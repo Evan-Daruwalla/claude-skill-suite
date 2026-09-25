@@ -28,7 +28,7 @@ const fs = require("fs");
 const path = require("path");
 
 const DEFAULT_FILE = "DECISIONS.md";
-const HEADER = "# Decision Log — one dated line per decision (append-only; not the project record)";
+const HEADER = "# Decision Log - one dated line per decision (append-only; not the project record)";
 
 // Zone labels by getTimezoneOffset() minutes — defaults to US Central.
 // getTimezoneOffset() returns minutes to ADD to local time to reach UTC, so a
@@ -59,11 +59,11 @@ function zoneLabel(d) {
   return `UTC${sign}${Math.floor(abs / 60)}:${pad2(abs % 60)}`;
 }
 
-// "- YYYY-MM-DD HH:MM <ZONE> — decided: <decision>" [" (why: <reason>)"]
+// "- YYYY-MM-DD HH:MM <ZONE> - decided: <decision>" [" (why: <reason>)"]  (ASCII only since 2026-09-23)
 function formatLine(d, decision, why) {
   const stamp = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ` +
     `${pad2(d.getHours())}:${pad2(d.getMinutes())} ${zoneLabel(d)}`;
-  let line = `- ${stamp} — decided: ${decision}`;
+  let line = `- ${stamp} - decided: ${decision}`;
   if (why) line += ` (why: ${why})`;
   return line;
 }
@@ -91,11 +91,28 @@ function resolveFile(file) {
   return path.isAbsolute(f) ? f : path.join(process.cwd(), f);
 }
 
+// The first character outside 0x00-0x7F in s, or null. DECISIONS.md is a .md
+// file this skill writes, and .md output is ASCII only (rule 2026-09-23).
+function firstNonAscii(s) {
+  const i = String(s).search(/[^\x00-\x7F]/);
+  if (i === -1) return null;
+  return { at: i + 1, cp: String(s).codePointAt(i).toString(16).toUpperCase().padStart(4, "0") };
+}
+
 // ---- commands --------------------------------------------------------------
 function cmdAdd(decision, why, file) {
   if (!decision || !decision.trim()) {
     console.error('error: add needs decision text — add "<decision>" [--why "<reason>"]');
     return 2;
+  }
+  // Refuse rather than transliterate: silently rewriting the owner's words is
+  // worse than an error that names the character to fix.
+  for (const [what, s] of [["decision", decision], ["--why", why]]) {
+    const bad = s ? firstNonAscii(s) : null;
+    if (bad) {
+      console.error(`error: non-ASCII character U+${bad.cp} at position ${bad.at} of the ${what} text. DECISIONS.md is ASCII only; replace it (em dash -> "-", arrow -> "->") and re-run. Nothing was written.`);
+      return 2;
+    }
   }
   const fp = resolveFile(file);
   // Newlines are collapsed: a multi-line decision (pasted from notes) wrote a
@@ -176,7 +193,7 @@ function runCanary() {
     check(cmdAdd("freeze the release config", "output must stay byte-exact", file) === 0, "add returns 0");
     let all = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.startsWith("- "));
     check(all.length === 1, "one entry after first add");
-    const re = /^- (\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}) (\S+) — decided: (.+)$/;
+    const re = /^- (\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}) (\S+) - decided: (.+)$/;
     const m = all[0].match(re);
     check(!!m, "line matches the required format");
     check(m && m[1] === expDate, "date equals system date");
@@ -191,6 +208,14 @@ function runCanary() {
     check(all.length === 2, "two entries after second add");
     check(all[0] === firstBefore, "first line untouched by second add");
     check(!/\(why:/.test(all[1]), "no why-clause when --why omitted");
+
+    // (b2) ASCII only (rule 2026-09-23): the log this tool writes is pure
+    //      ASCII, and non-ASCII input is refused with the log untouched.
+    check(/^[\x00-\x7F]*$/.test(fs.readFileSync(file, "utf8")), "the new log is pure ASCII, header included");
+    const sizeBefore = fs.statSync(file).size;
+    check(cmdAdd("move — now", null, file) === 2, "a non-ASCII decision is refused (exit 2)");
+    check(fs.statSync(file).size === sizeBefore, "a refused add leaves the log untouched");
+    check(cmdAdd("ok", "because → reasons", file) === 2 && fs.statSync(file).size === sizeBefore, "a non-ASCII --why is refused too");
 
     // (c) missing decision text -> exit 2, no file mutation for a fresh file
     const empty = path.join(dir, "EMPTY.md");
@@ -259,7 +284,7 @@ Usage:
   node decision-log.js --canary
   node decision-log.js --help
 
-Writes "- YYYY-MM-DD HH:MM <ZONE> — decided: <decision>" (+ " (why: ...)" ) to
+Writes "- YYYY-MM-DD HH:MM <ZONE> - decided: <decision>" (+ " (why: ...)" ) to
 DECISIONS.md, append-only. Clock is the REAL system clock; zone is driven by the
 ZONES map at the top of this file (default CST at UTC-6, CDT at UTC-5, else
 literal UTC±H:MM). NOT the project record or a handoff — the printed line is

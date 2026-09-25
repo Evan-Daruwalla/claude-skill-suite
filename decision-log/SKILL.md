@@ -41,7 +41,7 @@ node decision-log.js --canary
 
 - **Freeze call with a reason:**
   `node decision-log.js add "keep the factor weights frozen" --why "frozen regression must stay byte-exact"`
-  → `- 2026-07-21 10:37 CDT — decided: keep the factor weights frozen (why: frozen regression must stay byte-exact)`
+  → `- 2026-07-21 10:37 CDT - decided: keep the factor weights frozen (why: frozen regression must stay byte-exact)`
 - **Log to another project's file:**
   `node decision-log.js add "guardian consent is the hard launch gate" --file ../other-project/DECISIONS.md`
 - **Review what's been decided:** `node decision-log.js list`
@@ -94,4 +94,22 @@ the current UTC offset (recomputed independently in the canary from the same
 disturbing the first line, and missing decision text exits 2 without creating a
 file. MUST print `CANARY PASS n/n` before you trust a result.
 
-`node decision-log.js --canary` — MUST print `CANARY PASS 25/25` before you trust a result.
+`node decision-log.js --canary` — MUST print `CANARY PASS 29/29` before you trust a result.
+
+## ASCII-only markdown (rule added 2026-09-23)
+
+Every `.md` file this skill creates or writes to gets ASCII characters only
+(bytes 0x00-0x7F) in the text you add. No exceptions for headings, tables,
+quotes, names or pasted tool output.
+
+- Dashes: `-` (never an en or em dash). Arrows: `->` and `<-`. Quotes:
+  straight `"` and `'`. Ellipsis: `...`. Math: `x`, `+/-`, `<=`, `>=`, `~`.
+  Separators: `-`, `;` or `|`. No emoji, no check-mark glyphs (use `[x]` and
+  `[ ]`), no accented letters: transliterate names and quoted text.
+- Check before saving. In a git repo,
+  `git diff -U0 -- <file> | grep -v '^+++' | grep '^+' | grep -nP '[^\x00-\x7F]'`
+  must print nothing. For a new or untracked file,
+  `grep -nP '[^\x00-\x7F]' <file>` must print nothing.
+- Leave non-ASCII in text you did not write. Earlier entries of an
+  append-only record stay byte for byte; converting an existing file is a
+  separate, explicit job.
