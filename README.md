@@ -57,6 +57,12 @@ The model just runs them — output quality doesn't degrade with a cheaper model
 | **milestone-track** | Read-only roadmap status rollup for a PRD_ROADMAP.md-style doc: checkbox/glyph/struck-item counts per milestone, fork-aware (`## CURRENT DIRECTION`), first open item as `next:`. |
 | **decision-log** | Append one dated decision line with the real system clock and a configurable timezone label (default US Central) — paste-ready for a fuller record entry. |
 
+## Documents
+
+| Skill | What it does |
+|---|---|
+| **deck-builder** | Builds .pptx decks from a JSON spec through one fixed design system, then PROVES them inside the installed PowerPoint, over COM (Windows). You write the story: sentence titles, key terms, speaker notes, one highlighted bar. `build-deck.js` owns every position, size and color. `deck-check.js` then fails the deck on text that overflows its box or the slide, WCAG AA contrast (measured against the fill actually behind the text), text under 18 pt, missing or duplicate titles, and missing or file-name alt text, and renders every slide to PNG for review. Two facts it was built on, both measured: text pushed past the slide edge is invisible in a slide render, and pptxgenjs `fit:'shrink'` is not applied when PowerPoint opens the file. Design rules are tiered by evidence (meta-analyses vs practitioner lore), with sources in `references/rules.md`. |
+
 ## Judgment & review
 
 | Skill | What it does |
@@ -83,6 +89,7 @@ node history-leak-scan/pm-secretscan.js --history <repo>   # scan full history
 node landing-check/landing-probe.js --canary                # -> CANARY PASS 23/23 (hooksPath / twin / registration / remote census)
 node llm-eval-harness/score.js commit-message <file> --model <name>
 node token-squeeze/test.js                                 # corpus guards (after: npm install)
+node deck-builder/deck-check.js --live-check                # -> LIVE CHECK PASS (builds a known-bad deck in PowerPoint)
 ```
 
 ## Install
@@ -97,6 +104,10 @@ node token-squeeze/test.js                                 # corpus guards (afte
   stdlib only. No dependencies.
 - **token-squeeze:** `cd token-squeeze && npm install` once (pulls
   `gpt-tokenizer`), then `node cli.js` / `node test.js`.
+- **deck-builder:** Windows with PowerPoint installed; the checker measures
+  through COM. Install pptxgenjs once, OUTSIDE the skill folder:
+  `npm install --prefix "%LOCALAPPDATA%\deck-builder" pptxgenjs@4.0.1`.
+  `build-deck.js` finds it there.
 - **Prose skills** (compact-io, small-task, long-task, opus-workers, fetch-first, audit,
   audit-code, audit-docs, skill-vet, research-brief, reorg-proposal,
   github-repo-polish, venue-fit): drop the folder into

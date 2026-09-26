@@ -7,6 +7,8 @@
     "cve-audit/cve-audit.js",
     "data-integrity-audit/integrity_audit.py",
     "decision-log/decision-log.js",
+    "deck-builder/build-deck.js",
+    "deck-builder/deck-check.js",
     "determinism-guard/determinism-guard.js",
     "etl-validate/etl_validate.py",
     "experiment-log/agent-runs.js",

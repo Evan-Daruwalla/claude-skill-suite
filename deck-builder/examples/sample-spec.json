@@ -1,0 +1,78 @@
+{
+  "theme": "teal",
+  "title": "Slides that teach, not decorate",
+  "author": "deck-builder sample",
+  "slides": [
+    {
+      "type": "title",
+      "title": "Slides that teach, not decorate",
+      "subtitle": "What the evidence says about deck design, and what a script can check",
+      "byline": "deck-builder sample deck",
+      "notes": "This deck is built by build-deck.js from sample-spec.json and checked by deck-check.js. Every number in it comes from the research brief of 2026-09-25."
+    },
+    {
+      "type": "section",
+      "number": "01",
+      "title": "What the research supports",
+      "notes": "First, the design choices with real evidence behind them. Then, the ones that turn out to be lore."
+    },
+    {
+      "type": "chart",
+      "title": "Putting labels next to what they describe had the largest effect",
+      "chart": {
+        "labels": ["Labels next to the graphic", "Pleasant color and faces", "Signaling what matters", "Slides vs. no slides"],
+        "values": [0.63, 0.39, 0.38, 0.07],
+        "highlight": 0,
+        "format": "0.00"
+      },
+      "alt": "Bar chart of four effect sizes: labels placed next to the graphic 0.63, pleasant color and faces 0.39, signaling what matters 0.38, and slides versus no slides 0.07.",
+      "source": "Effect sizes (d or g): Schroeder and Cenkci 2018; Brom et al. 2018; Alpizar et al. 2020; Baker et al. 2018",
+      "notes": "Spatial contiguity, meaning a label placed on the thing it names, beat the other design effects here at g = 0.63 across 58 comparisons. Slides versus no slides at all is essentially zero: the tool does nothing, the design does."
+    },
+    {
+      "type": "compare",
+      "title": "Cut what is irrelevant, not what is warm",
+      "left": { "head": "The evidence says cut", "points": ["Interesting but irrelevant details", "The full script on the slide", "Labels far from their data"] },
+      "right": { "head": "The evidence says keep", "points": ["Pleasant, warm color", "Key terms from the talk", "Numbers the audience must remember"] },
+      "notes": "Minimal is not the finding. Relevance is. Emotional design raised retention, and printed key terms beat both the full script and nothing."
+    },
+    {
+      "type": "stats",
+      "title": "The strongest evidence is broad, and the famous rules are thin",
+      "stats": [
+        { "value": "78,177", "label": "participants across 29 reviews of multimedia design" },
+        { "value": "2", "label": "small audience studies behind sentence headlines" },
+        { "value": "0", "label": "studies found behind the 6x6 rule" }
+      ],
+      "source": "Noetel et al. 2022; Garner and Alley 2013; 2023 Shanlax study; searches of 2026-09-25",
+      "notes": "The overview of reviews is huge. The assertion-evidence format rests on two small studies, one run by its own author. The 6x6 rule has no traceable study at all."
+    },
+    {
+      "type": "section",
+      "number": "02",
+      "title": "What a script can check",
+      "notes": "Now the file itself. Some defects are invisible until PowerPoint lays the slide out."
+    },
+    {
+      "type": "image",
+      "title": "A slide render hid twenty lines of overflowing text",
+      "image": "overflow-render.png",
+      "alt": "Slide render showing ten lines of body text reaching the bottom edge of the slide; the other twenty lines are cut off with no visible sign.",
+      "points": ["PowerPoint measured 1,197 pt of text in a 342 pt box", "The render looked clean", "deck-check fails it as HARD"],
+      "source": "Measured with PowerPoint 16 through COM, 2026-09-25",
+      "notes": "This is why the checker measures instead of looking. The overflow went past the slide edge, so the picture of the slide simply does not show it."
+    },
+    {
+      "type": "points",
+      "title": "Six checks run on every deck before it ships",
+      "points": ["Text fits its box and the slide", "Contrast meets WCAG AA", "Body text is 18 pt or larger", "Every slide has a unique title", "Every picture and chart has alt text", "PowerPoint opens the file"],
+      "notes": "All six are measured through PowerPoint itself, and each one has a canary and a live check that proves it fires."
+    },
+    {
+      "type": "closing",
+      "title": "Build the story first, then let the checker argue",
+      "points": ["Write sentence titles and read them alone as the storyline", "Build with build-deck.js, check with deck-check.js", "Review the renders with fresh eyes"],
+      "notes": "Titles first, then evidence, then the machine checks, then a human look."
+    }
+  ]
+}
