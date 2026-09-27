@@ -84,7 +84,7 @@ ignore a placeholder:
 
 ```
 node run-all-canaries.js .                                 # every bundled canary, one command
-node history-leak-scan/pm-secretscan.js --canary            # -> 7 real caught, 0 false positives -> PASS
+node history-leak-scan/pm-secretscan.js --canary            # -> 8 real caught, 0 false positives -> PASS
 node history-leak-scan/pm-secretscan.js --history <repo>   # scan full history
 node landing-check/landing-probe.js --canary                # -> CANARY PASS 23/23 (hooksPath / twin / registration / remote census)
 node llm-eval-harness/score.js commit-message <file> --model <name>

@@ -30,7 +30,8 @@ with token-level placeholder suppression.
 - **Self-test (part of the definition of done):**
   `node pm-secretscan.js --canary`
   Plants real-format secrets + placeholders in a throwaway repo, asserts
-  ≥7 real caught and 0 false positives. MUST print `PASS` before you trust a
+  >=8 real caught (one is a current-format `sk-proj-` OpenAI key that only the
+  openai-key rule can see) and 0 false positives. MUST print `PASS` before you trust a
   scan result — an unverified gate is theater.
 
 ## When invoked

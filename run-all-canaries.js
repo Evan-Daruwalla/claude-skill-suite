@@ -286,6 +286,11 @@ function selfTest() {
     /UNREADABLE\.push/.test(selfSrc2));
   T("...and it sets the exit code rather than only printing",
     /if \(UNREADABLE\.length\) {[\s\S]{0,400}bad = true;/.test(selfSrc2));
+  // The check above passed while that line threw a ReferenceError: `bad` was
+  // declared below it. Position is the fact that matters. The needle is split
+  // so this test's own text cannot match it.
+  T("...and `bad` is declared BEFORE that block sets it (a TDZ crash otherwise)",
+    ((d, u) => d > -1 && u > -1 && d < u)(selfSrc2.indexOf("let " + "bad = failed"), selfSrc2.lastIndexOf("if (UNREADABLE.length) {")));
 
   T("--write-pin refuses on a failing canary", /failed\.length/.test(guard2));
   T("--write-pin ALSO refuses on any other finding", /if \(bad\)/.test(guard2));
@@ -427,6 +432,9 @@ const skipped = [];
 })(root);
 console.log(`\n=== ${pass}/${files.length} canaries passed ===`);
 if (skipped.length) console.log(`(${skipped.length} script(s) ship no --canary and were NOT tested: ${skipped.slice(0, 6).join(", ")}${skipped.length > 6 ? ", +" + (skipped.length - 6) + " more" : ""})`);
+// Declared BEFORE the UNREADABLE block that sets it: declared below it, an
+// unreadable file threw a ReferenceError here and every later check was skipped.
+let bad = failed.length > 0;
 if (UNREADABLE.length) {
   console.log(`UNREADABLE (${UNREADABLE.length}): ${UNREADABLE.join(", ")}`);
   console.log("  A file the walk could not open is NOT the same as one that ships no canary.");
@@ -442,7 +450,6 @@ if (UNREADABLE.length) {
 // arguments dies on `$1: unbound variable` before any assertion runs, which
 // reads as a broken canary rather than a mistyped command.
 console.log("(shell canaries, if your tree keeps any, are NOT run by this runner — run them by hand after touching a pre-commit hook or a PreToolUse gate, and list their exact argument forms here so the instruction is followable)");
-let bad = failed.length > 0;
 if (failed.length) console.log(`failed: ${failed.join(", ")}`);
 const declared = docPinAbsent.filter((l) => DECLARED_UNPINNABLE[l]);
 const undeclared = docPinAbsent.filter((l) => !DECLARED_UNPINNABLE[l]);

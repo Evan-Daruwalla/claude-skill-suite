@@ -252,7 +252,14 @@ async function runCanary() {
       line("DB_PASSWORD", "P4x8Rt2QmZ7v" + "KnBwY6cDfHjSgL0eUaWq") +
       line("admin_password", "admin" + "1234") +
       line("ANTHROPIC_API_KEY", "sk-ant-" + "api03-Xk7mQ2vL9pR4tY8w" + "ZbC5dF1gH6jN0sUa") +
-      line("RESEND_API_KEY", "re_dJ8kQ2mV" + "_" + "xT4bN7wZ9cF1gH5pL3sYaR"));
+      line("RESEND_API_KEY", "re_dJ8kQ2mV" + "_" + "xT4bN7wZ9cF1gH5pL3sYaR") +
+      // A current-format OpenAI project key (sk-proj- + 74 + marker + 74, the
+      // shape gitleaks and TruffleHog both match) in a header, where no
+      // NAME= keyword can rescue it: only the openai-key rule sees it. Record
+      // DO claimed modern keys lack the T3BlbkFJ marker; both scanners' rules
+      // say they carry it (checked 2026-09-26), so this pins that down.
+      "AUTH_HEADER_SAMPLE: Bearer " + "sk-" + "proj-" + ("Xk7mQ2vL9pR4tY8wZbC5dF1gH6jN0sUa" + "Pq3Wn8Rt5Ym2Kd7Hs4Jf9Lg6Zb1Xc0Vu" + "M4nB7vQ2xT").slice(0, 74) +
+      "T3Blbk" + "FJ" + ("Gh5Jk8Lm2Np4Qr7St9Vw3Xy6Za1Bc0De" + "Rf4Tg7Yh2Uj5Ik8Ol3Pm6Qn9Ws1Ex0Dc" + "Hy6Tg3Rf8Ed").slice(0, 74) + "\n");
     fs.writeFileSync(path.join(dir, "server" + ".pem"), "placeholder body, the NAME is the finding\n");
     fs.writeFileSync(path.join(dir, "example.env"),
       "API_KEY=your_api_key_here\ndb_password=changeme\n" +
@@ -270,8 +277,9 @@ async function runCanary() {
     const { findings } = await scanRepo(dir, "history");
     const real = findings.filter((f) => f.file === "config.py" || f.file.endsWith(".pem")).length;
     const fp = findings.length - real; // anything that isn't an expected real finding is a false positive
-    const pass = real >= 7 && fp === 0;
-    console.log(`canary: ${real} real caught (expect >=7), ${fp} false positive(s) (expect 0) -> ${pass ? "PASS" : "FAIL"}`);
+    const openai = findings.some((f) => f.file === "config.py" && f.rule === "openai-key");
+    const pass = real >= 8 && fp === 0 && openai;
+    console.log(`canary: ${real} real caught (expect >=8), ${fp} false positive(s) (expect 0), sk-proj key by the openai-key rule: ${openai ? "yes" : "NO"} -> ${pass ? "PASS" : "FAIL"}`);
     if (!pass) for (const f of findings) console.log(`  [${f.rule}] ${f.file}: ${f.snippet}`);
     return pass;
   } finally {
