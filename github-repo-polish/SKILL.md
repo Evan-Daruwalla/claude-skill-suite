@@ -1,13 +1,10 @@
 ---
 name: github-repo-polish
 description: >-
-  Makes an EXISTING repo professional: PRESENTATION (name, description,
-  topics, README structure, semver tags/releases) plus git BRANCH WORKFLOW
-  (GitHub Flow: feature branch → PR → merge → delete), grounded gh/git
-  commands, propose-then-confirm on every public change. Use when explicitly
-  asked to professionalize a repo's presentation or for
-  branching/PR/GitHub-Flow guidance. NOT for writing code, routine
-  "commit/push this", new-repo scaffolding, or CI/Actions.
+  Makes an EXISTING repo look professional (name, description, topics, README,
+  releases) and guides GitHub Flow branching; confirms every public change
+  first. Only when asked. NOT for writing code, routine commit/push, new
+  repos, or CI.
 ---
 
 # github-repo-polish

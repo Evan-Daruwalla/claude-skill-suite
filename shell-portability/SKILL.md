@@ -1,15 +1,10 @@
 ---
 name: shell-portability
 description: >-
-  Read-only syntax scanner for cross-shell traps, reporting file:line + why +
-  the PS-5.1-safe fix: && and || (PS 5.1 parser error), ternary / ?. / ??
-  (PS7-only), Read-Host/pause/Out-GridView (block non-interactive runs),
-  Set-Content/Add-Content/Out-File without -Encoding, bash-isms in .ps1 and
-  PowerShell-isms in .sh. Use when: "will this run on PowerShell 5.1", "lint
-  my shell scripts", "shell-portability", before scheduling a script — and
-  `check "<command>"` for ONE command string before handing it to someone to
-  run, the surface a file scan cannot reach. Syntax only — encoding/filename
-  quirks are path-quirk-audit. Zero deps.
+  Read-only scan for cross-shell traps with PS-5.1-safe fixes: && and ||,
+  PS7-only syntax, blocking prompts, missing -Encoding, bash-isms in .ps1.
+  check "<cmd>" tests one command. Use when: "will this run on PowerShell
+  5.1", "lint my shell scripts".
 ---
 
 # shell-portability — cross-shell syntax trap scanner

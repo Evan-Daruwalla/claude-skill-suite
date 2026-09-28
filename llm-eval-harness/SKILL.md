@@ -1,13 +1,10 @@
 ---
 name: llm-eval-harness
 description: >-
-  Measures how far a cheaper model falls from the Fable-5 quality bar on real
-  task types — deterministic CHECKS (format, discipline, no-fabrication,
-  surgical scope) plus line-similarity to captured Fable goldens; appends
-  every run to a ratchet so the gap is trackable over time. No API key, no
-  LLM-judge. Use when: "eval the model", "measure the Fable gap", "run the
-  eval harness", "score this output", or deciding whether a cheaper model is
-  good enough to switch to.
+  Measures how far a cheaper model falls from the Fable-5 bar: deterministic
+  checks plus similarity to goldens, logged to a ratchet. No API key or LLM
+  judge. Use when: "eval the model", "measure the Fable gap", or deciding
+  whether to switch models.
 ---
 
 # llm-eval-harness — is the cheaper model good enough yet?

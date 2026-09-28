@@ -1,13 +1,10 @@
 ---
 name: milestone-track
 description: >-
-  READ-ONLY roadmap rollup for PRD_ROADMAP.md conventions: parses "- [ ]"
-  checkboxes, ☐/☑ table glyphs, ~~struck~~ items (dropped, NEVER open),
-  milestone headings; per-milestone done/open/struck, overall %, first open
-  item as "next:". Fork-aware — a CURRENT DIRECTION section scopes by default,
-  --all covers the whole file. Use when: "milestone status", "roadmap rollup",
-  "how much of the PRD is done", "what's next on the roadmap". Never edits the
-  PRD. Zero deps.
+  READ-ONLY rollup of PRD_ROADMAP.md: done/open/struck per milestone, overall
+  %, next open item; CURRENT DIRECTION-aware. Use when: "milestone status",
+  "roadmap rollup", "how much of the PRD is done", "what's next on the
+  roadmap".
 ---
 
 # milestone-track — roadmap status rollup

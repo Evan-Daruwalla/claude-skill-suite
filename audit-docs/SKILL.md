@@ -1,17 +1,10 @@
 ---
 name: audit-docs
 description: >-
-  Exhaustive DOCUMENTATION audit, run COLD and tested against disk — not a
-  content inventory and not a style pass. Eight methods (claim verification,
-  code-element reference drift, doc-vs-code semantic conformance,
-  completeness against the real public surface, internal contradiction and
-  copy divergence, executable content, structure, provenance and currency).
-  Hunts WRONG before MISSING before UGLY, the measured practitioner
-  priority. Defaults to the whole project; pass "recent" to scope to changed
-  docs AND the docs that recent code changes should have updated but did
-  not. Use when: "audit the docs", "docs audit", "are the docs true", "did I
-  update the docs", "is the status doc still accurate". Findings only; fixes
-  after approval.
+  Cold DOCS-only audit tested against disk: are the docs TRUE (wrong before
+  missing before ugly); "recent" also finds docs that code changes should have
+  updated. Use when: "audit the docs", "are the docs true", "did I update the
+  docs". Findings only.
 ---
 
 # Audit — docs, whole project

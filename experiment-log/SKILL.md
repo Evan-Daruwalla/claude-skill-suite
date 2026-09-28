@@ -1,14 +1,10 @@
 ---
 name: experiment-log
 description: >-
-  Reproducibility provenance for a single run: executes a command and appends
-  ONE JSON line — ISO timestamp, cwd, cmd, exit, duration, git {commit,
-  dirty}, node/python versions, sha256 of declared inputs (hashed before) and
-  outputs (after), note. Append-only JSONL; never touches HANDOFF.md or the
-  record (project-memory owns the narrative). Use when: "log this run",
-  "record provenance", "experiment log", "make this run reproducible", "what
-  produced this output". Also ships a SubagentStop hook that logs every subagent
-  run (cost, tools, duration) to agent-runs.jsonl automatically. Zero deps.
+  Runs a command and appends one JSONL provenance line: time, cmd, exit,
+  duration, git commit/dirty, versions, file hashes. Its SubagentStop hook
+  logs every subagent run. Use when: "log this run", "record provenance",
+  "what produced this output".
 ---
 
 # experiment-log — reproducibility provenance for a run

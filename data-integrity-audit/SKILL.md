@@ -1,12 +1,9 @@
 ---
 name: data-integrity-audit
 description: >-
-  Read-only SQLite integrity audit — opens mode=ro, never writes. Three
-  checks: PRAGMA integrity_check, PRAGMA foreign_key_check, and explicit
-  orphan detection counting child rows whose FK value has no parent (catches
-  inserts made with enforcement OFF). Per-check PASS/FAIL with counts + first
-  5 rowids; exit 1 on any failure. Use when: "audit the database", "check DB
-  integrity", "find orphaned rows", "is the SQLite file corrupt". Zero deps.
+  Read-only SQLite integrity audit: integrity_check, foreign_key_check and
+  orphan-row detection; exit 1 on any failure. Use when: "audit the database",
+  "check DB integrity", "find orphaned rows", "is the SQLite file corrupt".
 ---
 
 # data-integrity-audit — read-only SQLite integrity audit

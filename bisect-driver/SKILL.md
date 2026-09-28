@@ -1,12 +1,10 @@
 ---
 name: bisect-driver
 description: >-
-  Automates git bisect to find the commit that introduced a behavior change:
-  give a known-good ref, a bad ref (default HEAD), and a repro command; drives
-  `git bisect run`, parses the first-bad commit, ALWAYS resets bisect state.
-  Refuses up front on a dirty tree or in-progress bisect. Use when: "bisect
-  this", "which commit broke X", "when did this test start failing",
-  "regression blame". Zero deps.
+  Drives git bisect: known-good ref, bad ref (default HEAD) and a repro
+  command in, first bad commit out; always resets bisect state, refuses on a
+  dirty tree. Use when: "bisect this", "which commit broke X", "when did this
+  test start failing".
 ---
 
 # bisect-driver — find the commit that introduced a change

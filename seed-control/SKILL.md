@@ -1,12 +1,10 @@
 ---
 name: seed-control
 description: >-
-  Read-only static scan for UNSEEDED randomness: Python random.*/np.random.*
-  with no seed call in the file, every JS/TS Math.random() (no seed API
-  exists). Reports file:line:snippet, exit 1 on findings; suppress a
-  known-fine line with # seed-ok / // seed-ok. Use when: "reproducibility
-  check", "did I forget to seed", "seed-control", before pinning a frozen or
-  regression run. Zero deps, writes nothing.
+  Read-only scan for UNSEEDED randomness (Python random/np.random without a
+  seed, any JS Math.random); file:line, exit 1 on findings, seed-ok
+  suppresses. Use when: "did I forget to seed", "reproducibility check",
+  before pinning a frozen run.
 ---
 
 # seed-control — catch unseeded randomness before it breaks reproducibility

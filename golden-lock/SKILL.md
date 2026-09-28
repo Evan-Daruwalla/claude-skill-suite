@@ -1,12 +1,10 @@
 ---
 name: golden-lock
 description: >-
-  Freeze ANY output as a byte-exact golden baseline — command stdout, fixture
-  file, or prompt/text asset — under .golden/; "check" re-produces it and
-  fails with a line-numbered diff on drift, comparing bytes AND exit code. Use
-  when: "freeze this output", "golden test", "lock the baseline", "did the
-  output change", "prompt regression", "guard against output drift". Zero
-  deps.
+  Freezes any output (command stdout, file, prompt) as a byte-exact baseline
+  under .golden/; "check" fails with a line diff on drift. Use when: "freeze
+  this output", "golden test", "lock the baseline", "did the output change",
+  "prompt regression".
 ---
 
 # golden-lock — freeze an output, diff on change

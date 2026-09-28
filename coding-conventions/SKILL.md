@@ -1,13 +1,9 @@
 ---
 name: coding-conventions
 description: >-
-  The coding rules that drift without a trigger: surgical changes, root cause
-  over symptom, simplicity-first rungs with marked shortcuts, verify before
-  claiming done with one runnable check. hooks/postwrite-check.js injects this
-  body after every Edit/Write of a CODE file (docs/config excluded, debounced
-  so a burst nudges once) so the rules land where code is being written. Also
-  "check this", "verify that code", "did that actually run". Not an audit
-  (/audit), not a bug hunt (/code-review).
+  Coding rules: surgical changes, root cause over symptom, simplest rung with
+  marked shortcuts, one runnable check before claiming done. Hook-injected
+  after code edits. Also: "check this", "did that actually run".
 license: MIT
 ---
 

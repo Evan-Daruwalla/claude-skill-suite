@@ -1,12 +1,10 @@
 ---
 name: commit-gate
 description: >-
-  Blocks commits that stage a secret — TWO deterministic hooks (native git
-  pre-commit covers shell commits; PreToolUse covers commits the model makes
-  via Bash) over the shared pm-secretscan scanner; also helps split large
-  changes into clean atomic commits. Use when: "commit-gate", "guard my
-  commits", "block secret commits", "set up the pre-commit hook". Reads
-  .claude/secrets-inventory.md.
+  Blocks commits that stage a secret: a git pre-commit hook plus a PreToolUse
+  hook for model commits; also splits big changes into atomic commits. Use
+  when: "guard my commits", "block secret commits", "set up the pre-commit
+  hook".
 ---
 
 # commit-gate — the secret never reaches a commit

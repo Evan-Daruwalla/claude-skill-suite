@@ -1,12 +1,9 @@
 ---
 name: small-task
 description: >-
-  Always-on framing for any task that fits one sitting: say what DONE proves,
-  name blockers before starting, list micro-steps each ending in a check, do
-  the riskiest step first, lock scope to this task. hooks/prompt-frame.js
-  injects this body on every prompt so it sits at the point of writing, not
-  at the top of a 100k-token context. Work longer than one sitting or more
-  than ~7 steps → long-task.
+  Always-on task framing, injected every prompt: say what DONE proves, name
+  blockers, micro-steps with checks, riskiest first, scope lock. Over one
+  sitting or ~7 steps: long-task.
 license: MIT
 ---
 

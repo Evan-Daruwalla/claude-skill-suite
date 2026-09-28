@@ -1,6 +1,10 @@
 ---
 name: research-brief
-description: Deep research on a technical or market topic producing a structured, sourced brief saved to the project's docs. Depth means verifiability, not length — citations re-fetched, negatives cross-checked, blind spots hunted by a fresh agent. Use when the user says "research X", "deep dive into X", "do research into X and propose candidates", or asks for analysis of an architecture, paper, strategy, or market event. Not for quick factual questions.
+description: >-
+  Deep research on a technical/market topic: a sourced brief saved to project
+  docs, citations re-fetched, blind spots checked by a fresh agent. Use when:
+  "research X", "deep dive into X", analysis of a paper, architecture or
+  market. Not quick facts.
 ---
 
 # Research Brief

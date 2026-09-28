@@ -1,12 +1,10 @@
 ---
 name: path-quirk-audit
 description: >-
-  Read-only tree scan for Windows corruption traps: any non-ASCII byte in
-  .bat/.cmd (one byte corrupts the whole parse — reports the offset), CRLF in
-  .sh, BOM/invalid UTF-8 in .json, root files shadowing cmd builtins or purely
-  numeric names, NTFS case collisions. Use when: "path-quirk-audit", "scan for
-  windows file quirks", "check for bat/encoding landmines", before shipping a
-  Windows-run repo. Symptom-side runbook = winfix. Zero deps.
+  Read-only scan for Windows file traps: non-ASCII bytes in .bat/.cmd, CRLF in
+  .sh, BOM/bad UTF-8 in .json, files shadowing builtins, case collisions. Use
+  when: "check for bat/encoding landmines", before shipping a Windows repo.
+  Symptoms: winfix.
 ---
 
 # path-quirk-audit — sweep a tree for Windows path/file landmines

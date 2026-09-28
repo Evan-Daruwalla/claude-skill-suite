@@ -1,13 +1,10 @@
 ---
 name: determinism-guard
 description: >-
-  Ephemeral invariance checker — run a command N times and prove
-  byte-identical stdout, stderr AND exit code (first-divergence diff on failure);
-  --files sha256s listed artifacts per run; --shuffle-stdin catches
-  order-dependence. No stored baselines — freezing an output across time is
+  Runs a command N times and proves byte-identical stdout, stderr and exit
+  code; --shuffle-stdin catches order dependence. Freezing output over time is
   golden-lock. Use when: "is this deterministic", "same output every run",
-  "reproducible build check", "is my output order-dependent", before freezing
-  or scheduling. Zero deps.
+  "reproducible build check".
 ---
 
 # determinism-guard — prove an output never varies

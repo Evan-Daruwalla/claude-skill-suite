@@ -1,16 +1,10 @@
 ---
 name: audit
 description: >-
-  Exhaustive project audit across BOTH domains — every code file and every doc,
-  run COLD by a fresh auditor with no inherited session belief, fanned out to
-  parallel workers under a file manifest that proves coverage. Runs the code
-  method sweep, the docs method sweep, AND the cross-domain pass neither can do
-  alone (doc claims tested against disk, code behaviour tested against stated
-  intent). Severity-ranked findings with verification tiers, load-bearing
-  negatives, and architecture findings ranked above the patch list. Use when:
-  "audit", "full audit", "audit everything", "find issues / security fixes /
-  edge cases", "what could break". Findings only by default; fixes after
-  approval.
+  Cold whole-project audit of code AND docs by a fresh agent under a coverage
+  manifest, plus the cross-check neither does alone (docs vs disk, code vs
+  intent). Use when: "audit", "full audit", "audit everything", "what could
+  break". Findings only.
 ---
 
 # Audit — both domains, whole project

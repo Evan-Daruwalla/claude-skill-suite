@@ -1,14 +1,10 @@
 ---
 name: long-task
 description: >-
-  Execution loop for work longer than one sitting or more than ~7 steps: a
-  numbered plan where every step ends in a check, riskiest step first, a
-  one-line state tracker at the top of each turn, an iteration budget, and a
-  progress lock — the same command failing the same way twice means change
-  approach or stop and report NO-PROGRESS (hooks/no-progress.js fires this
-  deterministically on PostToolUseFailure). Invoke: "long-task", "plan this
-  out", "this is a big one", multi-hour or multi-session work. Small work →
-  small-task. Cheaper-tier delegation → opus-workers. Launch risks → pre-mortem.
+  Loop for work over one sitting or ~7 steps: checked plan, riskiest first,
+  one-line state tracker, iteration budget, stop after the same failure twice.
+  Use when: "long-task", "plan this out", "this is a big one". Small work:
+  small-task.
 license: MIT
 ---
 

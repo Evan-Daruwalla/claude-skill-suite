@@ -1,17 +1,10 @@
 ---
 name: landing-check
 description: >-
-  Post-work verification sweep run by a FRESH agent: did the change land where
-  it actually executes (and does a new guard actually FIRE), do the stated
-  claims match disk, what should have moved and didn't, and did anything land
-  where it must NOT (a private identifier in a public copy). Reads claims from
-  ARTIFACTS (diff, record entry, report), never from the session's
-  recollection. Use when: "landing-check", "did that land", "sweep the
-  changes", "verify what I just did", "check my work", before committing a
-  multi-file or multi-tree change. Invoked only — never auto-fires. Ships
-  landing-probe.js (hooksPath / twin / registration / remote census, zero deps)
-  for the mechanical half. Defers code correctness to /code-review and
-  whole-project sweeps to /audit.
+  Post-work sweep by a FRESH agent: did the change land where it runs, do
+  claims match disk, what should have moved and didn't, did anything private
+  reach a public copy. Invoked only, never auto-fires: "landing-check", "did
+  that land", "check my work".
 ---
 
 # landing-check — did the work land, and are the claims true?

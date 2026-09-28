@@ -1,12 +1,10 @@
 ---
 name: reorg-proposal
 description: >-
-  Produce a NON-DESTRUCTIVE, read-only proposal for restructuring a codebase's
-  file/directory layout — current tree, proposed tree, and a per-move risk table
-  — WITHOUT moving, renaming, or editing any file. Use ONLY when the user
-  explicitly asks to propose/plan/design a reorganization or directory structure.
-  Do NOT use for generic organize/clean-up/tidy/refactor requests, for performing
-  moves, or for code-level refactors.
+  READ-ONLY proposal to restructure a codebase's file layout (current tree,
+  proposed tree, per-move risk) without moving anything. ONLY when explicitly
+  asked to propose or plan a reorganization. NOT for generic tidy/refactor
+  requests or doing moves.
 ---
 
 # reorg-proposal

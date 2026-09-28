@@ -1,13 +1,10 @@
 ---
 name: local-secrets-manage
 description: >-
-  Read-only hygiene audit of secret-bearing FILES by NAME (.env*, *.pem,
-  *.key, id_rsa*, *_keys.env, credentials*.json, secrets.*): per-file verdict
-  TRACKED-SECRET (already in the index — worst) / UNIGNORED (one `git add`
-  from leaking) / OK. --fix-print proposes .gitignore lines, NEVER applies
-  them. Names only — content/history scanning is history-leak-scan. Use when:
-  "is my .env ignored", "audit secret files", "local-secrets", before a repo
-  goes public. Zero deps.
+  Read-only audit of secret-bearing FILES by name (.env, *.pem, *.key,
+  credentials): TRACKED-SECRET / UNIGNORED / OK; proposes .gitignore lines,
+  never applies them. Contents: history-leak-scan. Use when: "is my .env
+  ignored", before a repo goes public.
 ---
 
 # local-secrets-manage — is my secret file tracked or ignored?

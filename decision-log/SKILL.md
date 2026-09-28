@@ -1,11 +1,9 @@
 ---
 name: decision-log
 description: >-
-  Appends ONE dated decision line to append-only DECISIONS.md — reads the REAL
-  clock, stamps the zone by UTC offset (UTC-6→CST, UTC-5→CDT), prints a
-  paste-ready line for a record entry. The lightweight per-decision line, NOT
-  the project record. Use when: "log this decision", "decision-log", "note
-  that we decided X", "record the call we just made". Zero deps.
+  Appends one dated line to append-only DECISIONS.md using the real clock,
+  zone by UTC offset (CST/CDT). Not the project record. Use when: "log this
+  decision", "note that we decided X", "record the call we just made".
 ---
 
 # decision-log — append a dated decision line

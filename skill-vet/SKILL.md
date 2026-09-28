@@ -1,6 +1,10 @@
 ---
 name: skill-vet
-description: Evaluate an external Claude Code skill, plugin, or MCP server (usually a GitHub URL) before installing it. Use when the user says "look at this skill", "evaluate whether these skills would be useful", "install this skill", or pastes a repo/marketplace link. Produces a verdict (install / skip / install-modified) with reasoning, then installs cleanly on approval.
+description: >-
+  Evaluates an external skill, plugin or MCP server (usually a GitHub URL)
+  before install: verdict install / skip / install-modified, then installs on
+  approval. Use when: "look at this skill", "install this skill", or a
+  repo/marketplace link is pasted.
 ---
 
 # Skill Vet

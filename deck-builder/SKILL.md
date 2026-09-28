@@ -1,18 +1,10 @@
 ---
 name: deck-builder
 description: >-
-  Builds clear, good-looking .pptx slide decks on Windows and PROVES them
-  before delivery. You write the story as a JSON spec (sentence titles, key
-  terms, speaker notes, one highlighted element per chart). build-deck.js
-  renders it through one fixed design system. deck-check.js then measures the
-  file inside the installed PowerPoint (COM) and fails it on overflowing or
-  cut-off text, contrast under WCAG AA, text under 18 pt, missing or duplicate
-  titles, and missing or file-name alt text. It also renders every slide to
-  PNG for a visual review. Design rules are tiered by evidence (research brief
-  of 2026-09-25). Use when: "make a deck", "build a presentation", "slides
-  for my talk", "make this into a PowerPoint", "check this deck", "is this
-  pptx readable". For editing an existing deck or filling a template, use
-  anthropic-skills:pptx, then run deck-check.js on the result.
+  Builds .pptx decks from a JSON spec with one design system, then proves them
+  in PowerPoint (overflow, contrast, font size, titles, alt text). Use when:
+  "make a deck", "build a presentation", "check this deck". Existing deck:
+  anthropic-skills:pptx.
 ---
 
 # deck-builder - evidence-tiered decks, checked by PowerPoint itself

@@ -1,17 +1,10 @@
 ---
 name: fetch-first
 description: >-
-  Routing rule for reaching the live internet: pick the cheapest surface that
-  can actually answer, and escalate only on a named failure. Library/framework
-  docs → a docs MCP (e.g. context7). Everything else → WebSearch/WebFetch
-  first. A browser-automation tool only when the page needs JS, interaction,
-  visual proof, or VERBATIM text (a fetch tool that answers through a
-  summarizing sub-model cannot return exact quotes). A real logged-in browser
-  only when the task needs an account
-  already signed in. Use whenever you are about to search the web, look
-  something up online, fetch a page or URL, check current docs or an API, read
-  an article, research a product or market, or "find out what's the latest on
-  X" — and whenever a browser tool is about to be opened for a read-only lookup.
+  Web lookup routing: cheapest surface that answers. Library docs: a docs MCP
+  (e.g. context7). Else WebSearch/WebFetch. Browser tool only for JS,
+  interaction, visual proof or verbatim text; logged-in browser only for
+  accounts. Use before web lookups.
 ---
 
 # fetch-first — cheapest surface that can answer, escalate on failure

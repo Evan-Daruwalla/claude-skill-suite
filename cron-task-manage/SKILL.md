@@ -1,13 +1,10 @@
 ---
 name: cron-task-manage
 description: >-
-  Windows scheduled-task auditor — READ-ONLY, only ever runs `schtasks
-  /query`. Flags Last Result != 0, Disabled, and enabled tasks whose Next Run
-  Time is N/A or already past. plan mode PRINTS the `schtasks /create` line
-  and NEVER runs create/delete/change. --fixture parses a saved capture
-  offline. Use when: "audit my scheduled tasks", "did the scheduled task run",
-  "why did the rebalance task fail", "is that task disabled",
-  "cron-task-manage". Zero deps.
+  READ-ONLY Windows scheduled-task auditor (only runs schtasks /query): flags
+  failed, disabled and stale tasks; prints create lines, never runs them. Use
+  when: "audit my scheduled tasks", "did the scheduled task run", "why did the
+  task fail".
 ---
 
 # cron-task-manage — Windows scheduled-task auditor (read-only)

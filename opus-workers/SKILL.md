@@ -1,13 +1,10 @@
 ---
 name: opus-workers
 description: >-
-  When spawning subagents or workflows for non-trivial work and a tier
-  strictly cheaper than the session model fits: run doer agents on that
-  cheaper tier (Opus medium/high for substantive generation, Sonnet low/medium
-  for mechanical bulk) after pre-registering a review rubric, then review each
-  output AS the session model — accept or send back with pointers. Skip for
-  trivial one-shots, for GATED actions (commit/push/public changes stay with
-  the orchestrator), and when no cheaper tier fits.
+  When spawning subagents for non-trivial work and a cheaper tier fits: run
+  doers on that tier against a pre-registered rubric, then review each output
+  as the session model. Skip for trivial one-shots and gated actions (commit,
+  push, public changes).
 ---
 
 # opus-workers — the orchestrator reviews, cheaper tiers do the bulk work

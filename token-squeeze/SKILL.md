@@ -1,13 +1,10 @@
 ---
 name: token-squeeze
 description: >-
-  Deterministic no-LLM compressor for text that will be REUSED — saved
-  prompts, system prompts, skill bodies, repeatedly-pasted docs.
-  Meaning-leaning, protects code/URLs/paths/quotes/numbers/negations. NOT for
-  live chat turns: those tokens are already spent; this pays only when the
-  compressed text replaces the original in future contexts. Use when:
-  "compress this prompt/doc for reuse", "shrink this system prompt",
-  "token-squeeze". Bundled Node CLI, no API key.
+  No-LLM compressor for text that will be REUSED (saved prompts, system
+  prompts, skill bodies); protects code, paths, numbers, negations. NOT for
+  live chat. Use when: "compress this for reuse", "shrink this system prompt",
+  "token-squeeze".
 ---
 
 This skill wraps a deterministic CLI. It does NOT ask you to compress text by hand — invoke the tool so results are reproducible and guard-checked.

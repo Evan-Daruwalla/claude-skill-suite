@@ -1,18 +1,10 @@
 ---
 name: audit-code
 description: >-
-  Exhaustive CODE audit, run COLD by a fresh auditor and fanned out to
-  parallel workers under a file manifest that proves coverage. Fifteen
-  methods (invariant tracing, call-site contracts, error paths, static
-  tooling, relative-churn targeting, dynamic verification, spec conformance,
-  data-at-rest, deps and supply chain, test-suite validation via mutation
-  score, fuzzing and property-based exploration, adversary-first threat
-  modelling, concurrency, architecture and dependency structure, compliance
-  surface) plus a four-generator edge-case sweep. Defaults to the whole
-  project; pass "recent" to scope to work since a base ref, plus the blast
-  radius of unchanged callers. Use when: "audit the code", "code audit",
-  "audit my changes", "find bugs / security fixes / edge cases". Findings
-  only; fixes after approval.
+  Cold CODE-only audit: 15 methods plus an edge-case sweep, parallel workers
+  under a coverage manifest; "recent" scopes to changes since a base ref. Use
+  when: "audit the code", "audit my changes", "find bugs / security fixes".
+  Findings only.
 ---
 
 # Audit — code, whole project
