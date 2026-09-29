@@ -35,6 +35,11 @@ Windows default, not PS7):
 | `Read-Host` / `pause` / `Out-GridView` | block a non-interactive / scheduled run | take input as a param / env / file |
 | `Set-Content`/`Add-Content`/`Out-File` w/o `-Encoding` | ANSI/UTF-16 default corrupts UTF-8 for the next reader | add `-Encoding utf8` |
 | bash-style `NAME=value` / `export NAME=value` | PS can't assign to a bareword; `export` isn't a cmdlet | `$name = value` / `$env:NAME = 'value'` |
+| a parameter 5.1 lacks: `ConvertFrom-SecureString -AsPlainText`, `Get-Content`/`Set-Content -AsByteStream`, `ForEach-Object -Parallel`, `ConvertFrom-Json -AsHashtable`, `ConvertTo-Json -AsArray`, `Invoke-WebRequest`/`Invoke-RestMethod -SkipCertificateCheck` | parameter binding error (measured absent on 5.1, 2026-09-28) | per-parameter fix in the report |
+
+**Any file, and `check`:** the payload of `powershell -Command "..."` /
+`pwsh -c '...'` is scanned as PowerShell. String masking used to hide it, so a
+trap wrapped in `-Command` reported clean.
 
 **`.sh` / `.bash`** — PowerShell-isms leaking into a POSIX script:
 
@@ -138,6 +143,9 @@ CAUGHT (a bad `.ps1` with `&&` + a ternary + an unencoded `Set-Content` yields
 exactly 3 findings; `??`, `?.`, `Read-Host`, bash-assign, and a bad `.sh` each
 caught) AND clean PS5.1-safe / POSIX code stays quiet (0 findings); the check
 mode catches a chained handed-over command and passes its chain-free form, in
-both dialects, and rejects an empty invocation; plus the
-`# portability-ok` suppression and an end-to-end directory walk. MUST print
-`CANARY PASS 22/22` before you trust a result.
+both dialects, and rejects an empty invocation; a trap inside a
+`powershell -Command` / `pwsh -c` payload is caught (in `.ps1` and `.sh`), as
+is the exact `-AsPlainText` command that failed on 5.1 on 2026-09-28, while its
+5.1-safe replacement is not; plus the `# portability-ok` suppression and an
+end-to-end directory walk. MUST print `CANARY PASS 30/30` before you trust a
+result.

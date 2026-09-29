@@ -17,6 +17,11 @@
  *     - Set-Content/Add-Content/Out-File WITHOUT -Encoding  (ANSI/UTF-16
  *       default corrupts UTF-8 for the next tool that reads the file)
  *     - bash-style `NAME=value` / `export NAME=value` assignments
+ *     - parameters PS 5.1 lacks (ConvertFrom-SecureString -AsPlainText,
+ *       -AsByteStream, ForEach-Object -Parallel, ...) -> binding error
+ *
+ *   Any file type, and `check`: the payload of `powershell -Command "..."` /
+ *   `pwsh -c '...'` is scanned as PowerShell (string masking used to hide it).
  *
  *   .sh/.bash:
  *     - $env:NAME            PowerShell env syntax in a POSIX script
@@ -84,6 +89,23 @@ const PS_RULES = [
     why: "bash-style assignment: PS can't assign to a bareword and `export` is not a cmdlet",
     fix: "$name = value   (or  $env:NAME = 'value'  for an env var)" },
 ];
+
+// Parameters that do not exist on PS 5.1, so the call dies with a binding error.
+// MEASURED absent on PS 5.1.26100 (2026-09-28); pwsh was not installed, so the
+// PS7 side is not measured. shortcut: full cmdlet names only (no gc / % aliases,
+// no abbreviated parameters) - add one when a real miss shows it.
+const PS7_PARAMS = [
+  ["ConvertFrom-SecureString", "AsPlainText", "[Net.NetworkCredential]::new('', $secure).Password"],
+  ["Get-Content|Set-Content", "AsByteStream", "-Encoding Byte"],
+  ["ForEach-Object", "Parallel", "a plain ForEach-Object, or Start-Job per item"],
+  ["ConvertFrom-Json", "AsHashtable", "walk the object's .PSObject.Properties into a hashtable"],
+  ["ConvertTo-Json", "AsArray", "ConvertTo-Json -InputObject @($x)"],
+  ["Invoke-WebRequest|Invoke-RestMethod", "SkipCertificateCheck", "no 5.1 switch; fix the certificate instead"],
+];
+for (const [cmds, param, fix] of PS7_PARAMS) {
+  PS_RULES.push({ id: "ps7-param", re: new RegExp(`\\b(?:${cmds})\\b[^|;]*\\s-${param}\\b`, "i"),
+    why: `${cmds.replace("|", "/")} -${param} does not exist on PS 5.1 (parameter binding error)`, fix });
+}
 
 const SH_RULES = [
   { id: "ps-env-var", re: /\$env:/,
@@ -174,6 +196,10 @@ function stripTrailingComment(s) {
   return s;
 }
 
+// `powershell -Command "..."` / `pwsh -c '...'`: the quoted payload IS
+// PowerShell code, but stripStrings blanks it, so no rule ever saw it (2026-09-28).
+const PS_PAYLOAD_RE = /\b(?:powershell|pwsh)(?:\.exe)?\b.*?\s-(?:c|command)\s+(["'])(.*)\1/i;
+
 function scanContent(text, ext) {
   const isPs = PS_EXT.has(ext);
   const rules = isPs ? PS_RULES : SH_RULES;
@@ -181,6 +207,8 @@ function scanContent(text, ext) {
   for (const { line, text: lt } of logicalLines(text, isPs)) {
     if (lt.includes(SUPPRESS)) continue;      // trailing # portability-ok
     if (isFullLineComment(lt)) continue;       // whole-line comment
+    const payload = PS_PAYLOAD_RE.exec(lt);
+    if (payload) for (const f of scanContent(payload[2], ".ps1")) findings.push({ ...f, line });
     // trailing comment first, THEN string contents: a `#` inside a string is
     // not a comment, and the trailing-comment scan is the one that knows that.
     const st = stripStrings(stripTrailingComment(lt));
@@ -367,6 +395,26 @@ function runCanary() {
     check(quiet(cmdCheck, ["echo $env:PATH", "--sh"]) === 1,
       "cmdCheck --sh catches a PowerShell-ism in a POSIX command");
     check(quiet(cmdCheck, []) === 2, "cmdCheck with no command -> exit 2");
+
+    // ---- 2026-09-28: the -Command payload, and PS7-only PARAMETERS ----------
+    // A command handed over as `powershell -Command "..."` failed on PS 5.1
+    // (ConvertFrom-SecureString has no -AsPlainText there) and `check` said
+    // clean twice over: string masking hid the whole payload, and no rule knew
+    // any parameter. Parameters below were MEASURED absent on PS 5.1.26100.
+    check(scanContent('powershell -NoProfile -Command "echo a && echo b"', ".ps1").length === 1,
+      "a trap inside powershell -Command \"...\" is scanned, not masked");
+    check(scanContent("pwsh -c 'echo a && echo b'", ".ps1").length === 1,
+      "a single-quoted pwsh -c payload is scanned too");
+    check(scanContent('powershell -Command "echo a && echo b"', ".sh").length === 1,
+      "a powershell -Command payload inside a .sh file is scanned as PowerShell");
+    check(scanContent("powershell -NoProfile -Command \"[Environment]::SetEnvironmentVariable('T', (Read-Host 'PAT' -AsSecureString | ConvertFrom-SecureString -AsPlainText), 'User')\"", ".ps1")
+      .some((f) => f.id === "ps7-param"), "the exact 2026-09-28 failure: -AsPlainText is caught");
+    check(scanContent("powershell -NoProfile -Command \"[Environment]::SetEnvironmentVariable('T', [Net.NetworkCredential]::new('', (Read-Host 'PAT' -AsSecureString)).Password, 'User')\"", ".ps1")
+      .every((f) => f.id !== "ps7-param"), "...and its 5.1-safe replacement has no ps7-param finding");
+    check(scanContent("$b = Get-Content f.bin -AsByteStream", ".ps1").length === 1, "-AsByteStream caught");
+    check(scanContent("$b = Get-Content f.bin -Encoding Byte", ".ps1").length === 0, "-Encoding Byte is clean");
+    check(scanContent('Write-Host "use -AsPlainText only on PS7"', ".ps1").length === 0,
+      "a parameter named inside a string is not flagged");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
