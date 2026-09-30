@@ -24,6 +24,7 @@
     "path-quirk-audit/path-quirk-audit.js",
     "seed-control/seed-control.js",
     "shell-portability/shell-portability.js",
+    "skill-vet/hooks/pretooluse-synced-guard.js",
     "small-task/hooks/prompt-frame.js",
     "token-squeeze/cli.js"
   ]
