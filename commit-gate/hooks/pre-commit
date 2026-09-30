@@ -5,20 +5,26 @@
 # Install: copy to <repo>/.git/hooks/pre-commit (chmod +x), OR point
 # `git config core.hooksPath` at a dir containing this file.
 #
-# Fail-open on scanner error (status != 1) so a scanner bug never wedges
-# commits — but NOISILY: a gate that skips silently is a dead gate.
+# Fail CLOSED (F-M2.7): if the repo cannot be resolved, the scanner is missing, or
+# the scanner errors (status not 0/1), the commit is BLOCKED with "broken, fix it".
 
 # Set this to wherever you cloned the suite:
 
 SCANNER="/path/to/claude-skill-suite/history-leak-scan/pm-secretscan.js"
 REPO=$(git rev-parse --show-toplevel)
 
+# A gate that cannot run must BLOCK (F-M2.7): every branch below that used to
+# print "SKIPPED (fail-open)" and exit 0 was a silent bypass of the secret gate.
+if [ -z "$REPO" ]; then
+  echo "commit-gate: cannot resolve repo - secret gate broken, fix it" >&2
+  exit 1
+fi
+
 # Without this guard a missing scanner makes node exit 1, which the branch below
 # reports as "a secret was detected" — blocking the commit with a false reason.
 if [ ! -f "$SCANNER" ]; then
-  echo "commit-gate WARNING: scanner not found at $SCANNER — secret gate SKIPPED (fail-open)." >&2
-  echo "The commit proceeds UNSCANNED." >&2
-  exit 0
+  echo "commit-gate: scanner not found at $SCANNER - secret gate broken - fix it" >&2
+  exit 1
 fi
 
 node "$SCANNER" --staged "$REPO"
@@ -31,7 +37,7 @@ if [ "$status" -eq 1 ]; then
   echo "(To override in a true emergency: git commit --no-verify — do NOT make this a habit.)" >&2
   exit 1
 elif [ "$status" -ne 0 ]; then
-  echo "commit-gate WARNING: scanner error (exit $status) — secret gate SKIPPED (fail-open)." >&2
-  echo "The commit proceeds UNSCANNED. Check node + $SCANNER" >&2
+  echo "commit-gate: scanner error (exit $status) - secret gate broken - fix it. Check node + $SCANNER" >&2
+  exit 1
 fi
 exit 0

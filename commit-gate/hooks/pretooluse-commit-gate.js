@@ -13,8 +13,11 @@
  * made from the shell; this covers commits the model makes via Bash.
  *
  * Always exits 0 — the block is expressed via permissionDecision:"deny" in the
- * JSON, never via a crash. Any internal error fails OPEN (allow), because a
- * scanner bug must not wedge every commit.
+ * JSON, never via a crash. A gate that cannot run (unparseable input, scanner
+ * missing, scanner exit other than 0/1, output over the buffer) DENIES with
+ * "secret gate is broken, fix it" (F-M2.7): a fail-open there is a silent bypass.
+ * Only target-resolution gaps (unparsed -C/cd, --git-dir, unmappable cwd,
+ * unparseable clauses) still allow, and always with a systemMessage warning.
  */
 "use strict";
 const fs = require("fs");
@@ -71,26 +74,46 @@ function unquote(s) {
 //
 // Tokenise instead, and let a value-taking short flag consume its own argument
 // so a message can never be read as flags.
-function usesCommitAll(clause) {
+//
+// The same walk also reports a PATHSPEC (`git commit -m x file.py`) and -o/-i:
+// both record working-tree content that is not in the index when this hook runs,
+// so main() widens the scan to --worktree for them.
+function commitFlags(clause) {
+  const r = { all: false, pathspec: false, only: false };
   const toks = clause.match(/"[^"]*"|'[^']*'|\S+/g) || [];
   const ci = toks.indexOf("commit");
-  if (ci < 0) return false;
-  const VALUE_LONG = /^--(message|file|author|date|template|reuse-message|reedit-message|fixup|squash|gpg-sign|cleanup)$/;
+  if (ci < 0) return r;
+  // --gpg-sign / -S / -u / --untracked-files take an OPTIONAL value that must be
+  // ATTACHED (`--gpg-sign=<id>`), so they must not swallow the next token: doing
+  // so hid a following pathspec (`git commit -S file`) from this walk.
+  const VALUE_LONG = /^--(message|file|author|date|template|reuse-message|reedit-message|fixup|squash|cleanup|trailer|pathspec-from-file)$/;
   for (let i = ci + 1; i < toks.length; i++) {
     const t = toks[i];
-    if (t === "--all") return true;
-    if (t.startsWith("--")) { if (VALUE_LONG.test(t)) i++; continue; }   // --opt value
-    if (t.startsWith("-") && t.length > 1) {
-      const flags = t.slice(1);
-      if (/a/.test(flags)) return true;
-      // m/F/c/C/t/u/S take a value; in a bundle it is the NEXT token
-      if (/[mFcCtS]/.test(flags)) i++;
+    if (t === "--") { if (i + 1 < toks.length) r.pathspec = true; break; }   // everything after is a pathspec
+    if (t === "--all") { r.all = true; continue; }
+    if (t === "--only" || t === "--include") { r.only = true; continue; }
+    if (t.startsWith("--")) {
+      if (/^--pathspec-from-file(=|$)/.test(t)) r.pathspec = true;
+      if (VALUE_LONG.test(t)) i++;   // --opt value
       continue;
     }
-    // a bare positional (pathspec or a consumed value) — not a flag
+    if (t.startsWith("-") && t.length > 1) {
+      // walk the bundle left to right: m/F/c/C/t take a value, which is the REST
+      // of the token if there is one (`-mfix`) and the NEXT token otherwise
+      for (let k = 1; k < t.length; k++) {
+        const c = t[k];
+        if (c === "a") r.all = true;
+        else if (c === "o" || c === "i") r.only = true;
+        else if ("mFcCt".includes(c)) { if (k === t.length - 1) i++; break; }
+        else if (c === "S" || c === "u") break;   // optional value, attached only
+      }
+      continue;
+    }
+    r.pathspec = true;   // a bare positional that no flag consumed: a pathspec
   }
-  return false;
+  return r;
 }
+const usesCommitAll = (clause) => commitFlags(clause).all;
 
 // Git Bash's `/tmp` is a real directory this process can reach, so it is the one
 // MSYS root worth mapping rather than refusing. Everything else under `/` stays
@@ -157,8 +180,18 @@ const CLAUSE_SEP = /&&|\|\||;|\n/;
 // tokenizer targetRepo already uses so a quoted message can never be read as
 // flags.
 const startsWithGit = (c) => /^\s*\(?\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*git\b/.test(c);
-const hasDryRunToken = (c) =>
-  (c.match(/"[^"]*"|'[^']*'|\S+/g) || []).some((t) => t === '--dry-run');
+// The token right after -m/-F/--message/--file (or a bundle ending in m/F, like
+// `-am`) is that flag's VALUE, not a flag: `git commit -m --dry-run` is a REAL
+// commit whose message is "--dry-run", and reading it as the flag disarmed the gate.
+const hasDryRunToken = (c) => {
+  const toks = c.match(/"[^"]*"|'[^']*'|\S+/g) || [];
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    if (t === "--dry-run") return true;
+    if (t === "--message" || t === "--file" || /^-[A-Za-z]*[mF]$/.test(t)) i++;   // skip the value
+  }
+  return false;
+};
 const isRealCommit = (c) =>
   startsWithGit(c) && /\bcommit\b/.test(c) && !hasDryRunToken(c);
 
@@ -211,7 +244,7 @@ function main() {
   // so we must allow — but LOUDLY: this was the one silent fail-open left in
   // the gate, and a silent skip is indistinguishable from a clean scan.
   try { j = JSON.parse(fs.readFileSync(0, "utf8")); }
-  catch { return allowWithWarning("commit-gate WARNING: unparseable hook input — secret gate SKIPPED; if this was a commit it is UNSCANNED."); }
+  catch { return deny("secret gate is broken, fix it: unparseable hook input (stdin was not JSON), so this gate cannot tell whether the command is a commit."); }
   const cmd = j && j.tool_input && j.tool_input.command;
   if (typeof cmd !== "string") return allow();
   // only a real `git commit`. The --dry-run test is scoped to the git-commit
@@ -224,7 +257,9 @@ function main() {
   // If NO clause is a real commit, every commit on this line is a dry run and
   // there is nothing to scan; otherwise the first real one governs.
   const clausesAll = cmd.split(CLAUSE_SEP);
-  const commitClause = clausesAll.find(isRealCommit);
+  const commitIdx = clausesAll.findIndex(isRealCommit);
+  const commitClause = clausesAll[commitIdx];   // undefined when commitIdx is -1
+  const before = commitIdx < 0 ? [] : clausesAll.slice(0, commitIdx);
   if (!commitClause) {
     // A line that plainly commits but whose clauses this parser could not
     // recognise must fail open LOUDLY. It used to return a bare allow() — the
@@ -260,6 +295,21 @@ function main() {
       );
     }
     return allow();
+  }
+
+  // PowerShell/bash directory changes other than `cd` move the commit's target
+  // repo, and targetRepo only follows `cd`: `Set-Location <other>; git commit`
+  // scanned the session cwd (clean) and allowed a secret staged in <other>.
+  // $env:GIT_DIR / $env:GIT_WORK_TREE relocate the repo the same way. Refuse
+  // outright rather than guess; this runs BEFORE the t.unknown warn-allow below.
+  const DIR_CHANGE = /^\s*\(?\s*(Set-Location|sl|pushd|Push-Location|chdir|popd|Pop-Location)\b/i;
+  const GIT_ENV_SET = /\$env:GIT_(DIR|WORK_TREE)\s*=/i;
+  const mover = before.find((c) => DIR_CHANGE.test(c) || GIT_ENV_SET.test(c));
+  if (mover !== undefined) {
+    return deny(
+      "secret gate: the commit's target directory is changed by a command this gate cannot follow (" +
+      mover.trim().slice(0, 80) + ") - run the commit from the target repo with cd or git -C"
+    );
   }
 
   // j.cwd goes through the SAME normalization as a -C/cd path. It did not, so a
@@ -298,40 +348,62 @@ function main() {
     );
   }
   const cwd = t.dir;
+  // A target that is not inside a git work tree is an UNKNOWN TARGET, not a broken
+  // gate: `git commit` fails there, so nothing can land. Loud allow. (A scanner
+  // error INSIDE a real repo still denies, below.)
+  let inTree = "";
+  try {
+    inTree = execFileSync("git", ["-C", cwd, "rev-parse", "--is-inside-work-tree"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch { /* not a repo, or the path does not exist */ }
+  if (inTree.trim() !== "true") {
+    return allowWithWarning(
+      "commit-gate WARNING: the commit target '" + cwd + "' is not inside a git work tree - " +
+      "git commit will fail there; secret gate SKIPPED, nothing to scan."
+    );
+  }
   // node exits 1 on MODULE_NOT_FOUND as well as on findings, so a missing
   // scanner would land in the status===1 branch below and DENY every commit with
   // a false "a secret was detected" — whose natural remedy is --no-verify, i.e.
   // no gate at all. Check for the file first and skip loudly instead.
   if (!fs.existsSync(SCANNER)) {
-    return allowWithWarning(
-      "commit-gate WARNING: scanner not found at " + SCANNER +
-      " — secret gate SKIPPED; this commit is UNSCANNED."
-    );
+    return deny("secret gate is broken, fix it: scanner not found at " + SCANNER);
   }
   // `git commit -a/--all` stages tracked modifications at commit time, AFTER
   // this hook runs, so the staged diff is empty and a real key was allowed
   // through. Widen the scan to HEAD for those. Long options are matched
   // explicitly; the short form only in a bundle of short flags (`-am`, `-a`),
   // so a value like `-m "all done"` cannot trigger it.
-  const commitsAll = usesCommitAll(commitClause);
+  const cf = commitFlags(commitClause);
+  // The index is not what gets committed when the SAME line runs `git add` first,
+  // when the commit names a pathspec, or with -o/-i: all of them record
+  // working-tree content (untracked files, unstaged edits) that neither --staged
+  // nor --staged-all can see at this moment. Scan the whole working tree.
+  const addsFirst = before.some((c) => startsWithGit(c) &&
+    (c.match(/"[^"]*"|'[^']*'|\S+/g) || []).some((t) => t === "add" || t === "stage"));
+  const worktree = addsFirst || cf.pathspec || cf.only;
+  const scanMode = worktree ? "--worktree" : cf.all ? "--staged-all" : "--staged";
   try {
-    execFileSync("node", [SCANNER, commitsAll ? "--staged-all" : "--staged", cwd], { encoding: "utf8" });
+    execFileSync("node", [SCANNER, scanMode, cwd], { encoding: "utf8", maxBuffer: 64 << 20 });
     return allow(); // exit 0 → no findings
   } catch (e) {
+    if (e && e.code === "ENOBUFS") {
+      return deny("secret gate: the scanner output exceeded the buffer - denying");
+    }
     if (e && e.status === 1) {
       const report = (e.stdout || "").trim();
       return deny(
-        "commit-gate: a secret was detected in the STAGED diff. Commit blocked.\n" +
+        "commit-gate: a secret was detected in the " + (worktree ? "WORKING TREE (this commit can record unstaged/untracked content)" : "STAGED diff") + ". Commit blocked.\n" +
         report +
         "\nRemove the secret from the diff (git restore --staged / edit the file), and if it is a live " +
         "credential, rotate it via the secret-rotation runbook and update .claude/secrets-inventory.md " +
         "before committing."
       );
     }
-    // usage error / scanner failure → fail open, loudly
-    return allowWithWarning(
-      "commit-gate WARNING: scanner error (" + ((e && e.status) || "unknown") +
-      ") — secret gate SKIPPED (fail-open); this commit is UNSCANNED. Check the scanner."
+    // usage error / scanner failure: the scan did not run, so deny (F-M2.7)
+    return deny(
+      "secret gate is broken, fix it: scanner error (exit " + ((e && e.status) || (e && e.code) || "unknown") +
+      "); this commit cannot be scanned. Check node and " + SCANNER
     );
   }
 }
@@ -342,7 +414,7 @@ function runCanary() {
   // os is required at module scope
   const { execFileSync, spawnSync } = require("child_process");
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cg-canary-"));
-  let clean = null;
+  let clean = null, wt = null;
   let pass = 0, fail = 0;
   const check = (cond, desc) => { if (cond) pass++; else { fail++; console.log("  FAIL: " + desc); } };
   const decide = (cwd, command) => {
@@ -370,13 +442,31 @@ function runCanary() {
     check(decide(dir, "git commit --dry-run -m x") === "allow", "a real git commit --dry-run -> allow");
     check(decide(dir, "ls -la") === "allow", "non-commit command -> allow");
     check(decide(dir, "git status") === "allow", "git non-commit -> allow");
-    // an unscannable target must be LOUD, never a silent allow
+    // a target that is not a git work tree is an UNKNOWN target (git commit fails
+    // there): loud allow, never a silent one
     check(decide(path.join(os.tmpdir(), "cg-not-a-repo-xyz"), "git commit -m x") === "warn",
-      "non-repo cwd -> noisy fail-open, not silent allow");
-    // malformed input used to allow SILENTLY — indistinguishable from a clean scan
+      "non-repo cwd -> noisy allow (unknown target), not silent allow");
+    // ...but a scanner that exits 2 INSIDE a real repo is a broken gate: deny.
+    // Run a copy of this hook next to a stub scanner that exits 2.
+    const stubRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cg-stub-"));
+    try {
+      fs.mkdirSync(path.join(stubRoot, "commit-gate", "hooks"), { recursive: true });
+      fs.mkdirSync(path.join(stubRoot, "history-leak-scan"), { recursive: true });
+      const stubHook = path.join(stubRoot, "commit-gate", "hooks", "pretooluse-commit-gate.js");
+      fs.copyFileSync(__filename, stubHook);
+      fs.writeFileSync(path.join(stubRoot, "history-leak-scan", "pm-secretscan.js"), "process.exit(2);\n");
+      const sr = spawnSync(process.execPath, [stubHook], {
+        input: JSON.stringify({ cwd: dir, tool_input: { command: "git commit -m x" } }), encoding: "utf8",
+      });
+      check((sr.stdout || "").includes('"deny"') && (sr.stdout || "").includes("gate is broken"),
+        "scanner exit 2 inside a real repo -> deny as broken");
+    } finally {
+      fs.rmSync(stubRoot, { recursive: true, force: true });
+    }
+    // malformed input used to allow SILENTLY, then LOUDLY (F-M2.7): now it denies
     const bad = spawnSync(process.execPath, [__filename], { input: "not json", encoding: "utf8" });
-    check((bad.stdout || "").includes("systemMessage") && bad.status === 0,
-      "malformed stdin -> loud skip, never a silent allow");
+    check((bad.stdout || "").includes('"deny"') && (bad.stdout || "").includes("gate is broken") && bad.status === 0,
+      "malformed stdin -> deny as broken");
 
     // A multi-clause line can name TWO repos. Resolving from the first -C on the
     // line scanned the wrong one and allowed the commit with empty stdout — a
@@ -424,6 +514,63 @@ function runCanary() {
       'a VAR=value prefix before git is still a real commit');
     check(!isRealCommit('cd /some/repo'),
       'a bare cd is NOT a real commit');
+    // `-m --dry-run`: the token after -m is the MESSAGE, so this is a real commit
+    check(isRealCommit('git commit -m --dry-run'), '-m --dry-run is a REAL commit (value, not flag)');
+    check(isRealCommit('git commit -am --dry-run'), '-am --dry-run is a REAL commit');
+    check(isRealCommit('git commit --message --dry-run'), '--message --dry-run is a REAL commit');
+    check(isRealCommit('git commit -F --dry-run'), '-F --dry-run is a REAL commit');
+    check(!isRealCommit('git commit -m x --dry-run'), 'a real --dry-run flag after -m x is still a dry run');
+    // pathspec / -o / -i detection (they widen the scan to the working tree)
+    check(commitFlags('git commit -m x tracked.py').pathspec, 'positional after -m x is a pathspec');
+    check(commitFlags('git commit -mfix tracked.py').pathspec, 'attached -mfix does not swallow the pathspec');
+    check(commitFlags('git commit -m x -- tracked.py').pathspec, 'tokens after -- are pathspecs');
+    check(!commitFlags('git commit -m "a b c" --author "A <a@b.c>"').pathspec, 'message and --author values are not pathspecs');
+    check(commitFlags('git commit -o -m x f').only && commitFlags('git commit --include -m x f').only, '-o / --include detected');
+
+    // ---- worktree widening the index is NOT what gets committed when
+    // the same line runs `git add`, or the commit names a pathspec / -o / -i.
+    // Repo `wt`: HEAD has a clean tracked file; the secret is added UNSTAGED.
+    wt = fs.mkdtempSync(path.join(os.tmpdir(), "cg-wt-"));
+    const gw = (a) => execFileSync("git", ["-C", wt, ...a], { stdio: "ignore" });
+    execFileSync("git", ["init", "-q", wt], { stdio: "ignore" });
+    gw(["config", "user.email", "c@c.c"]); gw(["config", "user.name", "canary"]);
+    fs.writeFileSync(path.join(wt, "tracked.py"), "x = 1\n");
+    gw(["add", "-A"]); gw(["commit", "-qm", "base"]);
+    check(decide(wt, "git add -A && git commit -m x") === "allow", "control: clean repo, git add -A && commit -> allow");
+    fs.writeFileSync(path.join(wt, "tracked.py"), 'AWS_KEY = "AKIA' + 'QZ3RT7YXKW9MPL2V"\n');   // unstaged edit
+    check(decide(wt, "git add -A && git commit -m x") === "deny", "git add -A && commit with an UNSTAGED secret -> deny");
+    check(decide(wt, "git add . && git commit -m x") === "deny", "git add . && commit with an UNSTAGED secret -> deny");
+    check(decide(wt, "git commit -m x tracked.py") === "deny", "commit with a pathspec and an UNSTAGED secret -> deny");
+    check(decide(wt, "git commit -o -m x tracked.py") === "deny", "commit -o <path> with an UNSTAGED secret -> deny");
+    check(decide(wt, "git commit -a -m x") === "deny", "control: commit -a with an unstaged secret -> deny");
+    fs.writeFileSync(path.join(wt, "new_untracked.py"), 'K = "AKIA' + 'QZ3RT7YXKW9MPL2V"\n');
+    gw(["checkout", "-q", "--", "tracked.py"]);   // only the UNTRACKED secret remains
+    check(decide(wt, "git add -A && git commit -m x") === "deny", "git add -A && commit with an UNTRACKED secret -> deny");
+    // `git commit -m --dry-run` is a real commit; the staged secret in `dir` must block it
+    check(decide(dir, "git commit -m --dry-run") === "deny", "commit -m --dry-run (real commit) with a staged secret -> deny");
+
+    // Set-Location / pushd / sl move the target repo where the gate cannot follow.
+    // Session cwd is a CLEAN repo; the staged secret is in `dir`.
+    check(decide(clean, `Set-Location ${dir}; git commit -m x`) === "deny", "Set-Location <other>; commit -> deny");
+    check(decide(clean, `pushd ${dir}; git commit -m x`) === "deny", "pushd <other>; commit -> deny");
+    check(decide(clean, `sl ${dir}; git commit -m x`) === "deny", "sl <other>; commit -> deny");
+    check(decide(clean, `$env:GIT_DIR = "${dir}"; git commit -m x`) === "deny", "$env:GIT_DIR = ..; commit -> deny");
+
+    // a missing scanner must DENY (was a warn-allow): run a copy of this hook from
+    // a dir where ../../history-leak-scan/pm-secretscan.js does not exist
+    const lone = fs.mkdtempSync(path.join(os.tmpdir(), "cg-lone-"));
+    try {
+      fs.mkdirSync(path.join(lone, "commit-gate", "hooks"), { recursive: true });
+      const copy = path.join(lone, "commit-gate", "hooks", "pretooluse-commit-gate.js");
+      fs.copyFileSync(__filename, copy);
+      const r = spawnSync(process.execPath, [copy], {
+        input: JSON.stringify({ cwd: dir, tool_input: { command: "git commit -m x" } }), encoding: "utf8",
+      });
+      check((r.stdout || "").includes('"deny"') && (r.stdout || "").includes("gate is broken"),
+        "scanner file missing -> deny as broken");
+    } finally {
+      fs.rmSync(lone, { recursive: true, force: true });
+    }
 
     const ok = fail === 0;
     console.log(`CANARY ${ok ? "PASS" : "FAIL"} ${pass}/${pass + fail}`);
@@ -431,6 +578,7 @@ function runCanary() {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
     if (clean) fs.rmSync(clean, { recursive: true, force: true });
+    if (wt) fs.rmSync(wt, { recursive: true, force: true });
   }
 }
 

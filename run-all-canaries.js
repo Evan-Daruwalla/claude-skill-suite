@@ -126,9 +126,9 @@ function findDocPin(scriptPath, allCanaries) {
     // worse than reporting nothing — it sends you to edit a file that was right.
     const siblings = allCanaries.filter((g) => g === scriptPath || g.startsWith(dir + path.sep));
     // ...unless that lone pin NAMES a different script. A pin line naming a
-    // script is that script's pin: the installed the-humanizer has one canary
-    // (voice_stats.py) and a SKILL.md, byte-identical to the lab copy, whose
-    // one pin is for the lab-only extract_corpus.py. Without this check that
+    // script is that script's pin: an installed skill can have one canary
+    // (a stats script) and a SKILL.md, byte-identical to its lab copy, whose
+    // one pin is for a lab-only extraction script. Without this check that
     // 7/7 was handed to a script that does not print it.
     const namesOther = (l) => (l.match(/[\w.-]+\.(?:js|py)\b/g) || []).some((n) => n !== base);
     if (lines.length === 1 && siblings.length === 1 && !namesOther(lines[0])) return num(lines[0]);
@@ -158,6 +158,21 @@ function manifestDiff(have, expected) {
 // when the run passed.
 function verdictLineOf(outLines) {
   return outLines.filter((l) => /CANARY (PASS|FAIL)|canary:/i.test(l)).pop();
+}
+
+// Exit 0 alone is NOT a pass. A script that merely mentions --canary in a
+// comment, or one that prints "CANARY FAIL 1/3" and then exits 0, used to be
+// counted green. PASS needs exit 0 AND a passing verdict line: either the
+// `CANARY PASS n/n` shape (numerator equals denominator) or pm-secretscan's
+// declared `canary: ... -> PASS` shape. A canary in EXIT_CODE_ONLY (declared
+// where DECLARED_UNPINNABLE is) passes on exit 0 alone, and says so.
+// Pure, so the self-test can call it: returns { ok, note }.
+function scoreCanary(status, verdict, exitCodeOnlyReason) {
+  if (status !== 0) return { ok: false, note: "" };
+  if (exitCodeOnlyReason) return { ok: true, note: "(exit-code only: " + exitCodeOnlyReason + ")" };
+  const v = verdict || "";
+  if (/CANARY PASS (\d+)\/\1\b/.test(v) || /-> PASS\s*$/.test(v)) return { ok: true, note: "" };
+  return { ok: false, note: "exit 0 but no passing verdict line" };
 }
 
 const argv = process.argv.slice(2);
@@ -266,6 +281,18 @@ function selfTest() {
     verdictLineOf(["CANARY PASS 5/5", "error: this is a deliberate fixture"]) === "CANARY PASS 5/5");
   T("no verdict line yields undefined", verdictLineOf(["just output"]) === undefined);
 
+  // --- scoreCanary: exit 0 is necessary, not sufficient ----------------------
+  T("exit 0 with 'CANARY FAIL 1/3' is rejected", !scoreCanary(0, "CANARY FAIL 1/3").ok);
+  T("exit 0 with no verdict line (a --canary comment only) is rejected",
+    !scoreCanary(0, undefined).ok && scoreCanary(0, undefined).note === "exit 0 but no passing verdict line");
+  T("exit 0 with 'CANARY PASS 5/5' is accepted", scoreCanary(0, "CANARY PASS 5/5").ok);
+  T("exit 0 with 'canary: 8 real caught ... -> PASS' is accepted",
+    scoreCanary(0, "canary: 8 real caught, 0 missed -> PASS").ok);
+  T("exit 0 with 'CANARY PASS 4/5' is rejected", !scoreCanary(0, "CANARY PASS 4/5").ok);
+  T("a non-zero exit is rejected even with a PASS line", !scoreCanary(1, "CANARY PASS 5/5").ok);
+  T("an EXIT_CODE_ONLY canary passes on exit 0 alone and says why",
+    scoreCanary(0, undefined, "reason x").ok && /exit-code only: reason x/.test(scoreCanary(0, undefined, "reason x").note));
+
   // --- pinKey: an absolute key would leak a local path into a public repo ---
   T("a sibling tree keys relatively", !path.isAbsolute(pinKey(path.join(__dirname, "x"))));
   T("this directory keys as '.'", pinKey(__dirname) === ".");
@@ -300,6 +327,15 @@ function selfTest() {
 
   T("keys are lowercased so D:\\ and /d/ cannot disagree",
     pinKey(path.join(__dirname, "MiXeD")) === pinKey(path.join(__dirname, "mixed")));
+
+  // synced/ is harness-managed (bundled skills, CLI 2.1.283): its ~59 scripts
+  // flooded the "NOT tested" list. Skipped at the tree ROOT only, so a skill's
+  // own nested folder that happens to be called synced/ is still walked.
+  T("synced/ at the tree root is skipped", typeof skipDir === "function" && skipDir(tmp, "synced", tmp));
+  T("...but a nested synced/ is walked", typeof skipDir === "function" && !skipDir(path.join(tmp, "x"), "synced", tmp));
+  T("...and node_modules is still skipped anywhere",
+    typeof skipDir === "function" && skipDir(path.join(tmp, "x"), "node_modules", tmp));
+  T("both walks use skipDir", (selfSrc2.match(/skipDir\((dir|d), e\.name, root\)/g) || []).length === 2);
 
   fs.rmSync(tmp, { recursive: true, force: true });
   return checks;
@@ -336,12 +372,20 @@ if (expect === null) {
   else if (Array.isArray(pinned)) { expect = pinned.length; expectList = pinned; pinSource = path.basename(PINS_FILE) + " (manifest)"; }
 }
 
+// Directories no walk enters. `synced` only at the tree ROOT: the harness syncs
+// bundled skills there (CLI 2.1.283), and they are not this suite's to test.
+// A declaration, so it is hoisted - selfTest runs before `root` exists.
+function skipDir(dir, name, treeRoot) {
+  return ["node_modules", ".git", "__pycache__"].includes(name) ||
+    (name === "synced" && path.resolve(dir) === path.resolve(treeRoot));
+}
+
 // a canary is any .js/.py in the tree whose own source offers --canary
 function findCanaries(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) {
-      if (e.name === "node_modules" || e.name === ".git" || e.name === "__pycache__") continue;
+      if (skipDir(dir, e.name, root)) continue;
       findCanaries(p, out);
     } else if (/\.(js|py)$/.test(e.name)) {
       // never discover ourselves — by NAME, not just by path: this script is
@@ -374,14 +418,18 @@ const DECLARED_UNPINNABLE = {
     "ships no SKILL.md by design — it is a hook, registered rather than loaded",
   "history-leak-scan/pm-secretscan.js":
     "prints its own verdict shape (`canary: N real caught ... -> PASS`), not `CANARY PASS n/n`",
-  "the-humanizer/scripts/voice_stats.py":
-    "prints diagnostics and no verdict line; its pass/fail is the exit code alone",
   // These three hooks inject their SKILL.md BODY into context — two on every
   // prompt, one after every code edit. A pin line in that body is re-sent on
   // every turn (it shipped that way for one session, 2026-09-10).
   "small-task/hooks/prompt-frame.js": "its hook injects the SKILL.md body into context, so a pin line there costs tokens on every turn",
   "compact-io/hooks/prompt-density.js": "its hook injects the SKILL.md body into context, so a pin line there costs tokens on every turn",
   "coding-conventions/hooks/postwrite-check.js": "its hook injects the SKILL.md body into context, so a pin line there costs tokens on every turn",
+};
+
+// Canaries whose pass/fail is the exit code ALONE (they print no verdict line).
+// Key = path relative to the tree root, forward slashes (as DECLARED_UNPINNABLE).
+const EXIT_CODE_ONLY = {
+  "the-humanizer/scripts/voice_stats.py": "prints diagnostics and no verdict line; its pass/fail is the exit code alone",
 };
 
 for (const f of files) {
@@ -392,8 +440,9 @@ for (const f of files) {
   const out = ((r.stdout || "") + (r.stderr || "")).trim().split("\n").filter(Boolean);
   const verdict = verdictLineOf(out);
   const last = (verdict || out[out.length - 1] || "(no output)").slice(0, 90);
-  if (r.status === 0) { pass++; console.log(`  PASS  ${label}  ${last}`); }
-  else { failed.push(label); console.log(`  FAIL  ${label}  [exit ${r.status}]  ${last}`); }
+  const sc = scoreCanary(r.status, verdict, EXIT_CODE_ONLY[label]);
+  if (sc.ok) { pass++; console.log(`  PASS  ${label}  ${sc.note || last}`); }
+  else { failed.push(label); console.log(`  FAIL  ${label}  [exit ${r.status}]  ${sc.note || last}`); }
 
   // A SKILL.md saying `MUST print CANARY PASS N/N` is a pin written as PROSE,
   // and a prose pin is read by nothing — the exact scheme canary-pins.json
@@ -423,7 +472,7 @@ const skipped = [];
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) {
-      if (["node_modules", ".git", "__pycache__"].includes(e.name)) continue;
+      if (skipDir(dir, e.name, root)) continue;
       scan(p);
     } else if (/[.](js|py)$/.test(e.name) && e.name !== path.basename(__filename) && !files.includes(p)) {
       skipped.push(path.relative(root, p).split(String.fromCharCode(92)).join("/"));
@@ -432,6 +481,18 @@ const skipped = [];
 })(root);
 console.log(`\n=== ${pass}/${files.length} canaries passed ===`);
 if (skipped.length) console.log(`(${skipped.length} script(s) ship no --canary and were NOT tested: ${skipped.slice(0, 6).join(", ")}${skipped.length > 6 ? ", +" + (skipped.length - 6) + " more" : ""})`);
+// synced/ is skipped by skipDir; say how much that hides instead of dropping it silently.
+let syncedN = 0;
+(function countSynced(dir) {
+  let ents = [];
+  try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of ents) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) { if (!["node_modules", ".git", "__pycache__"].includes(e.name)) countSynced(p); }
+    else if (/[.](js|py)$/.test(e.name)) syncedN++;
+  }
+})(path.join(root, "synced"));
+if (syncedN > 0) console.log(`(${syncedN} script(s) under synced/ skipped - harness-managed, not this suite's)`);
 // Declared BEFORE the UNREADABLE block that sets it: declared below it, an
 // unreadable file threw a ReferenceError here and every later check was skipped.
 let bad = failed.length > 0;

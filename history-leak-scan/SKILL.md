@@ -24,6 +24,9 @@ with token-level placeholder suppression.
   Exit 1 if any finding, 0 if clean. Redacts matched tokens in output.
 - **Staged scan (what commit-gate runs):**
   `node pm-secretscan.js --staged <repo>`
+- **Worktree scan (commit-gate uses it when a commit can record unstaged content):**
+  `node pm-secretscan.js --worktree <repo>` - diff vs HEAD plus every untracked,
+  non-ignored file (e.g. after `git add -A`, or with a pathspec / `-o`).
 - **Self-test (part of the definition of done):**
   `node pm-secretscan.js --canary`
   Plants real-format secrets + placeholders in a throwaway repo, asserts

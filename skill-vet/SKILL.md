@@ -101,3 +101,16 @@ quotes, names or pasted tool output.
 - Leave non-ASCII in text you did not write. Earlier entries of an
   append-only record stay byte for byte; converting an existing file is a
   separate, explicit job.
+
+## Guard hook: no model writes into skills/synced/
+
+`hooks/pretooluse-synced-guard.js` is a PreToolUse hook (matcher
+`Edit|Write|MultiEdit|NotebookEdit`). It denies any write under
+`~/.claude/skills/synced/`, the harness-managed folder of bundled/synced
+skills. A vetted-or-not skill that tells the model to rewrite its own
+SKILL.md from reviewed content (the stock the-humanizer's Auto-Improvement
+Loop) is a persistent-injection vector; this is the gate for it. Bash writes
+are not covered (stated in the file). Escape hatch: `SYNCED_GUARD_OFF=1`.
+
+`node hooks/pretooluse-synced-guard.js --canary` - MUST print
+`CANARY PASS 16/16` before you trust a result.

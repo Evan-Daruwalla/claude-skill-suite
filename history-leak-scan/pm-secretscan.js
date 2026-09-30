@@ -6,6 +6,10 @@
  *            scans `git log -p --all` (every version ever committed)
  *   staged:  node pm-secretscan.js --staged <repo>
  *            scans `git diff --cached` (for a pre-commit / PreToolUse hook)
+ *   also:    --staged-all  (diff HEAD: what `git commit -a` records)
+ *            --worktree    (diff HEAD + every untracked non-ignored file:
+ *                           what `git add -A && git commit` / `git commit
+ *                           <pathspec>` can record)
  *
  * High-signal per-provider regexes + a generic assignment+entropy detector,
  * with an allowlist so obvious test/example values don't fire (a scanner that
@@ -13,6 +17,7 @@
  */
 "use strict";
 const fs = require("fs");
+const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 
 // ---- detectors -------------------------------------------------------------
@@ -121,6 +126,40 @@ function detect(line, file) {
 }
 
 // ---- git streaming ---------------------------------------------------------
+function hasNoHead(repo) {
+  return spawnSync("git", ["-C", repo, "rev-parse", "--verify", "-q", "HEAD"], { encoding: "utf8" }).status !== 0;
+}
+
+// worktree mode: every untracked, non-ignored file is a full addition. Listed
+// from the repo TOP LEVEL (ls-files is cwd-relative, and the gate may hand us a
+// subdirectory while `git add -A` stages the whole tree). Symlinks and
+// directories (nested repos show as `dir/`) are skipped; a regular file that
+// cannot be read is an ERROR (returned string), never a silent skip.
+function scanUntracked(repo, findings) {
+  const top = spawnSync("git", ["-C", repo, "rev-parse", "--show-toplevel"], { encoding: "utf8" });
+  if (top.status !== 0) return "git rev-parse --show-toplevel failed";
+  const root = top.stdout.trim();
+  const ls = spawnSync("git", ["-C", root, "ls-files", "--others", "--exclude-standard", "-z"], { encoding: "utf8", maxBuffer: 256 << 20 });
+  if (ls.status !== 0) return "git ls-files failed: " + String(ls.stderr || "").trim().split("\n")[0];
+  for (const f of ls.stdout.split("\0")) {
+    if (!f || f.endsWith("/")) continue;
+    const abs = path.resolve(root, f);
+    let text;
+    try {
+      if (!fs.lstatSync(abs).isFile()) continue;
+      text = fs.readFileSync(abs, "utf8");
+    } catch (e) { return "cannot read untracked file " + f + ": " + String(e.message || e); }
+    if (SENSITIVE_FILE.test(f) && !FILE_EXEMPT.test(basename(f))) {
+      findings.push({ commit: "(untracked)", file: f, rule: "sensitive-filename", snippet: "(file of this name should not be committed)" });
+    }
+    for (const l of text.split(/\r?\n/)) {
+      const rule = detect(l, f);
+      if (rule) findings.push({ commit: "(untracked)", file: f, rule, snippet: redact(l.trim()) });
+    }
+  }
+  return null;
+}
+
 function scanRepo(repo, mode) {
   return new Promise((resolve) => {
     // staged      → what `git commit` will record.
@@ -140,11 +179,15 @@ function scanRepo(repo, mode) {
     // gate read that as a scanner error, and the commit went through on a loud
     // fail-open. With no HEAD, `--cached` describes the same thing `-a` would
     // record, because every tracked file is new.
-    const noHead = spawnSync("git", ["-C", repo, "rev-parse", "--verify", "-q", "HEAD"], { encoding: "utf8" }).status !== 0;
+    // worktree    → staged-all PLUS every untracked non-ignored file. `git add -A
+    //               && git commit` and `git commit <pathspec>` record content
+    //               that is neither in the index nor in `diff HEAD` when this
+    //               gate runs (untracked files, unstaged edits, both AFTER it).
+    const noHead = hasNoHead(repo);
     const args =
       mode === "staged"
         ? ["-C", repo, "diff", "--cached", "--no-color", "-U0", "--text"]
-        : mode === "staged-all"
+        : (mode === "staged-all" || mode === "worktree")
         ? (noHead
             ? ["-C", repo, "diff", "--cached", "--no-color", "-U0", "--text"]
             : ["-C", repo, "diff", "HEAD", "--no-color", "-U0", "--text"])
@@ -152,9 +195,21 @@ function scanRepo(repo, mode) {
     const git = spawn("git", args);
     const findings = [];
     let commit = "(working)", file = "?", buf = "";
+    // `+++ ` is a FILE HEADER only right after a `--- ` line and outside a
+    // hunk. Content lines carry a leading `+`, so an added line whose text starts
+    // `++ b/README.md` arrives as `+++ b/README.md` and used to be read as a
+    // header: `file` flipped to an exempt path and that line was never scanned.
+    // The old `!line.startsWith("+++")` content test also dropped every added line
+    // starting `++`. `prev` + `inHunk` (set at `@@`, cleared at the next `diff `
+    // header) make both spoofs impossible: content lines start with + - or space,
+    // so a line beginning `diff ` or `@@` is always real git structure.
+    let prev = "", inHunk = false;
     const onLine = (line) => {
-      if (line.startsWith("commit ")) commit = line.slice(7, 17);
-      else if (line.startsWith("+++ ")) {
+      const p = prev; prev = line;
+      if (line.startsWith("commit ")) { commit = line.slice(7, 17); inHunk = false; }
+      else if (line.startsWith("diff ")) inHunk = false;
+      else if (line.startsWith("@@")) inHunk = true;
+      else if (!inHunk && line.startsWith("+++ ") && p.startsWith("--- ")) {
         // git C-quotes paths with special chars: `+++ "b/dir/na\342\200\224me.md"\t`
         // (leading quote + trailing tab). Plain paths: `+++ b/dir/name.md`.
         // Parsing only `+++ b/` left `file` as "?" for any special-char path,
@@ -175,7 +230,7 @@ function scanRepo(repo, mode) {
           findings.push({ commit, file, rule: "sensitive-filename", snippet: "(file of this name should not be committed)" });
         }
       }
-      else if (line.startsWith("+") && !line.startsWith("+++")) {
+      else if (line.startsWith("+")) {
         // NOT skipped wholesale on SKIP_FILES: that dropped lockfiles and minified
         // bundles before ANY rule ran, so an npm `_authToken` or an AWS key
         // embedded in package-lock.json was invisible to every gate (audit
@@ -197,7 +252,12 @@ function scanRepo(repo, mode) {
     // gate: callers read exit 0 as "allow". Surface it instead.
     git.on("close", (code) => {
       if (buf) onLine(buf);
-      resolve({ repo, findings, error: code !== 0, stderr: stderr.trim() });
+      let error = code !== 0, err = stderr.trim();
+      if (!error && mode === "worktree") {
+        const u = scanUntracked(repo, findings);
+        if (u) { error = true; err = u; }
+      }
+      resolve({ repo, findings, error, stderr: err });
     });
     git.on("error", (e) => resolve({ repo, findings: [], error: true, stderr: String(e.message || e) }));
   });
@@ -210,9 +270,13 @@ function scanRepo(repo, mode) {
 // files. Enumerate the touched paths separately, where no diff body is involved.
 function scanNames(repo, mode) {
   return new Promise((resolve) => {
+    // staged-all / worktree: `diff HEAD` FAILS with no commits yet (the same
+    // first-commit case scanRepo handles), which used to leave this list empty
+    // and silently disable the name rule; fall back to --cached there.
+    const noHeadDiff = hasNoHead(repo) ? "--cached" : "HEAD";
     const args =
       mode === "staged"     ? ["-C", repo, "diff", "--cached", "--name-only"]
-      : mode === "staged-all" ? ["-C", repo, "diff", "HEAD", "--name-only"]
+      : (mode === "staged-all" || mode === "worktree") ? ["-C", repo, "diff", noHeadDiff, "--name-only"]
       : ["-C", repo, "log", "--all", "-m", "--name-only", "--pretty=format:"];
     const git = spawn("git", args);
     let out = "";
@@ -278,9 +342,45 @@ async function runCanary() {
     const real = findings.filter((f) => f.file === "config.py" || f.file.endsWith(".pem")).length;
     const fp = findings.length - real; // anything that isn't an expected real finding is a false positive
     const openai = findings.some((f) => f.file === "config.py" && f.rule === "openai-key");
-    const pass = real >= 8 && fp === 0 && openai;
-    console.log(`canary: ${real} real caught (expect >=8), ${fp} false positive(s) (expect 0), sk-proj key by the openai-key rule: ${openai ? "yes" : "NO"} -> ${pass ? "PASS" : "FAIL"}`);
-    if (!pass) for (const f of findings) console.log(`  [${f.rule}] ${f.file}: ${f.snippet}`);
+    const histPass = real >= 8 && fp === 0 && openai;
+    if (!histPass) for (const f of findings) console.log(`  [${f.rule}] ${f.file}: ${f.snippet}`);
+
+    // ---- staged + worktree parts, in a SECOND repo ------------------------
+    // Regression pins for the diff-header spoof and the worktree mode. Each
+    // fixture is a shape the old parser silently dropped or mis-attributed.
+    const hit = (fs_, file) => fs_.some((f) => f.file === file);
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "pmscan-canary2-"));
+    let stA = false, stB = false, stC = false, wtU = false, wtT = false;
+    try {
+      const g2 = (a) => execFileSync("git", ["-C", dir2, ...a], { stdio: "ignore" });
+      execFileSync("git", ["init", "-q", dir2], { stdio: "ignore" });
+      g2(["config", "user.email", "c@c.c"]); g2(["config", "user.name", "canary"]);
+      // a clean tracked base so HEAD exists (exercises the `diff HEAD` path)
+      fs.writeFileSync(path.join(dir2, "base.txt"), "clean\n");
+      g2(["add", "-A"]); g2(["commit", "-qm", "base"]);
+      const hi = "aQ9vK2mZ7pL4xR8n" + "ToB6yC3dF5gH0jSuWeR";
+      const aws = "AKIA" + "QZ3RT7YXKW9MPL2V";
+      // (a) a lone assignment line
+      fs.writeFileSync(path.join(dir2, "a.py"), line("api_secret", hi));
+      // (b) first content line `++ b/README.md` arrives as `+++ b/README.md`
+      //     and used to flip the file to an exempt .md path
+      fs.writeFileSync(path.join(dir2, "b.py"), "++ b/README.md\n" + line("api_secret", hi));
+      // (c) an added line starting `++x` (no space) was skipped as "a header"
+      fs.writeFileSync(path.join(dir2, "c.py"), "++x " + aws + "\n");
+      g2(["add", "-A"]);
+      const st = (await scanRepo(dir2, "staged")).findings;
+      stA = hit(st, "a.py"); stB = hit(st, "b.py"); stC = hit(st, "c.py");
+      // worktree: an untracked file, and an UNSTAGED edit of a tracked file
+      fs.writeFileSync(path.join(dir2, "u.py"), "K = " + aws + "\n");
+      fs.appendFileSync(path.join(dir2, "base.txt"), aws + "\n");
+      const wt = (await scanRepo(dir2, "worktree")).findings;
+      wtU = hit(wt, "u.py"); wtT = hit(wt, "base.txt");
+    } finally {
+      fs.rmSync(dir2, { recursive: true, force: true });
+    }
+    const yn = (b) => (b ? "yes" : "NO");
+    const pass = histPass && stA && stB && stC && wtU && wtT;
+    console.log(`canary: ${real} real caught (expect >=8), ${fp} false positive(s) (expect 0), sk-proj key by the openai-key rule: ${yn(openai)}, staged lone-assign/++-header-spoof/++x: ${yn(stA)}/${yn(stB)}/${yn(stC)}, worktree untracked/unstaged-edit: ${yn(wtU)}/${yn(wtT)} -> ${pass ? "PASS" : "FAIL"}`);
     return pass;
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -290,7 +390,7 @@ async function runCanary() {
 async function main() {
   const argv = process.argv.slice(2);
   if (argv.includes("--canary")) { process.exit((await runCanary()) ? 0 : 1); }
-  const KNOWN = new Set(["--staged", "--staged-all", "--history", "--canary"]);
+  const KNOWN = new Set(["--staged", "--staged-all", "--worktree", "--history", "--canary"]);
   // an unrecognised flag used to be filtered out silently, so a typo like
   // `--stage` fell through to history mode and the staged diff — the thing the
   // gate exists to check — was never scanned.
@@ -298,14 +398,16 @@ async function main() {
   // here; it used to pass this filter, land in `repos` below as a PATH, and
   // abort with "cannot change to '-C'" instead of naming the bad flag.
   const bad = argv.filter((a) => a.startsWith("-") && !KNOWN.has(a));
-  if (bad.length) { console.error(`unknown flag(s): ${bad.join(" ")}\nusage: pm-secretscan.js --history|--staged|--canary <repo>...`); process.exit(2); }
-  // --staged-all is checked FIRST: `--staged --staged-all` must widen the scan,
-  // not narrow it. Narrowing on flag order would reintroduce the -a bypass.
-  const mode = argv.includes("--staged-all") ? "staged-all"
+  if (bad.length) { console.error(`unknown flag(s): ${bad.join(" ")}\nusage: pm-secretscan.js --history|--staged|--staged-all|--worktree|--canary <repo>...`); process.exit(2); }
+  // --worktree, then --staged-all, are checked FIRST: `--staged --staged-all`
+  // must widen the scan, not narrow it. Narrowing on flag order would
+  // reintroduce the -a bypass.
+  const mode = argv.includes("--worktree") ? "worktree"
+    : argv.includes("--staged-all") ? "staged-all"
     : argv.includes("--staged") ? "staged"
     : "history";
   const repos = argv.filter((a) => !a.startsWith("-"));
-  if (!repos.length) { console.error("usage: pm-secretscan.js --history|--staged|--canary <repo>..."); process.exit(2); }
+  if (!repos.length) { console.error("usage: pm-secretscan.js --history|--staged|--staged-all|--worktree|--canary <repo>..."); process.exit(2); }
   let total = 0;
   for (const repo of repos) {
     const { findings, error, stderr } = await scanRepo(repo, mode);
